@@ -1,0 +1,54 @@
+name: CLA Assistant
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+# Serialize updates to the shared signature file.
+concurrency:
+  group: cla-signatures
+  cancel-in-progress: false
+
+jobs:
+  cla:
+    name: Check contributor signatures
+    if: >-
+      github.repository == 'MaxLynk/ducky-game' &&
+      (github.event_name == 'pull_request_target' ||
+       (github.event.issue.pull_request &&
+        (github.event.comment.body == 'recheck' ||
+         github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # This privileged workflow does not check out or execute pull request code.
+      - name: Request and record CLA signatures
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-document: https://github.com/MaxLynk/ducky-game/blob/main/CLA.md
+          path-to-signatures: signatures/version1/cla.json
+          branch: signatures
+          allowlist: ''
+          lock-pullrequest-aftermerge: 'false'
+          create-file-commit-message: Create CLA signature record
+          signed-commit-message: Record CLA signature
+          custom-pr-sign-comment: I have read the CLA Document and I hereby sign the CLA
+          custom-notsigned-prcomment: >-
+            Read https://github.com/MaxLynk/ducky-game/blob/main/CLA.md before signing.
+            While it is marked as a draft, wait for counsel review before signing.
+            Once reviewed, sign by posting exactly:
+            I have read the CLA Document and I hereby sign the CLA
+            Use a GitHub handle that does not reveal a real person's name.
+            Do not include a legal name or personal email address.
+          custom-allsigned-prcomment: All contributors have signed the CLA. Maintainers must also verify that counsel review is complete before merging.
