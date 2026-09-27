@@ -1,0 +1,30 @@
+{
+  "generator": "Blender 5.3.0 Alpha, private Blender export pipeline; FFmpeg JPEG conversion",
+  "device": "CPU exports and CPU sky render",
+  "sourceIds": [
+    "ship-solid-ring/v1",
+    "ice-plain/v1",
+    "ducky-v2/ice",
+    "ducky-v2/helmet"
+  ],
+  "assets": {
+    "ship.glb": {
+      "sha256": "3e6740bf752874a8932840917c21c25285d0a660cd8ea0ab888b4eac17cc206d"
+    },
+    "set.glb": {
+      "sha256": "86d616adaf3b75eb24df19dc3fb13b570c91916acf69adb55c882bd3c0a8dd87"
+    },
+    "ducky-ice.glb": {
+      "sha256": "85e1edd7a46f73bb19d8b580c6748d265c203db4f2078e7e133dd7de9abd512c"
+    },
+    "ducky-helmet.glb": {
+      "sha256": "248a2699eea0673f8ceed87c3064c873517544dab1f413b08638a888523373b2"
+    },
+    "sky.jpg": {
+      "sha256": "5324a3bc0591f4c43f6b51942fe0ada4bf7fd34f74f8943a40e3d0fac8ed43df"
+    },
+    "collision.json": {
+      "sha256": "99d8d56723d6f44da12541f8cbc7ff93dc0f4d9a57ed943e2a764059bf437c92"
+    }
+  }
+}

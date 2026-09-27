@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ducky | The Iceberg</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="./src/style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="view" aria-label="Ducky game world"></canvas>
+<header><div class="wordmark">DUCKY<span>THE ICEBERG CHRONICLES</span></div><div id="place">THE ICE PLAIN</div><span class="build-tag">FIRST PLAYABLE</span></header>
+<div id="hud">
+  <div class="eyebrow" id="chapter">01 / A LITTLE MOMENTUM</div>
+  <h1 id="objective">The ice is yours.</h1>
+  <p id="hint">Slide across the ice. Packed snow will slow you down.</p>
+  <div id="readout"><span id="speed">0.0 m/s</span><span id="surface">ICE</span><span id="snow-status">SNOWBALL READY</span></div>
+  <div id="status"></div>
+</div>
+<div id="crosshair"><span></span></div>
+<div id="toast" role="status"></div>
+<div id="name" class="hidden"><span>The Iceberg</span></div>
+<div id="inspect-panel" class="hidden">
+  <div class="eyebrow">MODEL INSPECTOR</div>
+  <label for="model-select">Selected model</label><select id="model-select"></select>
+  <p>Drag to orbit. Scroll or use the buttons to zoom. V or Escape returns to Ducky.</p>
+  <label class="cutaway"><input id="cutaway" type="checkbox" checked> Interior cutaway</label>
+  <div class="inspect-actions"><button id="zoom-in">Zoom in</button><button id="zoom-out">Zoom out</button><button id="exit">Return</button></div>
+  <small id="model-detail"></small>
+</div>
+<div id="stick" class="hidden"><div id="knob"></div></div>
+<nav id="actions" aria-label="Game actions">
+  <button id="slide"><kbd>SPACE</kbd>Slide</button><button id="throw"><kbd>F</kbd>Snowball</button>
+  <button id="interact"><kbd>E</kbd>Use</button><button id="inspect"><kbd>V</kbd>Inspect</button>
+</nav>
+<footer id="help">WASD / arrows: walk <b>·</b> Mouse: aim <b>·</b> Click / F: throw <b>·</b> Right drag / J L U O: look</footer>
+<div id="loading"><div class="wordmark">DUCKY<span>GETTING THE ICE READY</span></div><p>Loading The Iceberg and the ice plain</p></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

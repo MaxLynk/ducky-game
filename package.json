@@ -1,0 +1,22 @@
+{
+  "name": "ducky-game",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Ducky powers on the ice plain and exploration of The Iceberg.",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": "Maxwell Industries LLC",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/serve.mjs",
+    "test": "node --test test/*.test.mjs",
+    "drive": "node scripts/drive.mjs",
+    "drive:control": "node scripts/drive.mjs --collision=off",
+    "browser": "node scripts/browser.mjs",
+    "licences": "node scripts/licences.mjs",
+    "test:browser": "node scripts/milestone-browser.mjs"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  }
+}
