@@ -32,14 +32,14 @@ jobs:
     steps:
       # This privileged workflow does not check out or execute pull request code.
       - name: Request and record CLA signatures
-        uses: contributor-assistant/github-action@v2.6.1
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-document: https://github.com/MaxLynk/ducky-game/blob/main/CLA.md
           path-to-signatures: signatures/version1/cla.json
           branch: signatures
-          allowlist: ''
+          allowlist: 'Odium-bot,*[bot]'
           lock-pullrequest-aftermerge: 'false'
           create-file-commit-message: Create CLA signature record
           signed-commit-message: Record CLA signature
