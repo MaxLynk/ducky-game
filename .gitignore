@@ -33,3 +33,7 @@ Thumbs.db
 *.blend1
 *.blend2
 *.bak
+
+# Game verification output
+review-output/
+browser-out/

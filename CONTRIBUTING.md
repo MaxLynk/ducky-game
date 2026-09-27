@@ -2,7 +2,7 @@
 
 We're building Ducky in public. We welcome code contributions and bug fixes. Level contributions are welcome when a maintainer has requested them. Before starting a larger change, open an issue so we can agree on its scope.
 
-The game is at the repository setup stage. Build and test commands will be documented when the game code arrives.
+The build, run and test commands are in the [README](README.md).
 
 ## Making a contribution
 
