@@ -1,10 +1,10 @@
 // Static build with no bundler and no dependency beyond three itself: copy the page, the
 // sources, the parts of three the page imports, and the exported assets into dist/.
 // Any static file server can host dist/; it fetches nothing from any other origin.
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { phoneProblems } from './make-phone-assets.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -44,16 +44,10 @@ const phoneDir = path.join(assets, 'phone');
 const phoneManifest = path.join(phoneDir, 'manifest.json');
 if (fs.existsSync(phoneManifest) === false) missing.push('phone/manifest.json');
 else {
-  const { files } = JSON.parse(fs.readFileSync(phoneManifest, 'utf8'));
-  const stale = [];
-  for (const f of wanted.filter((f) => f.endsWith('.glb') || f === 'sky.jpg')) {
-    const src = path.join(assets, f);
-    if (fs.existsSync(src) === false) continue;
-    const sum = crypto.createHash('sha256').update(fs.readFileSync(src)).digest('hex');
-    if (files[f]?.source_sha256 !== sum) stale.push(f);
-    else if (files[f].phone && fs.existsSync(path.join(assets, files[f].phone)) === false) missing.push(files[f].phone);
-  }
+  const { stale, corrupt, missing: gone } = phoneProblems(assets, wanted.filter((f) => f.endsWith('.glb') || f === 'sky.jpg'));
+  missing.push(...gone);
   if (stale.length) throw new Error('Phone assets are stale for ' + stale.join(', ') + '. Run node scripts/make-phone-assets.mjs and commit assets/phone.');
+  if (corrupt.length) throw new Error('Phone assets do not match their manifest sha256: ' + corrupt.join(', ') + '. Run node scripts/make-phone-assets.mjs and commit assets/phone.');
   for (const f of fs.readdirSync(phoneDir)) copy(path.join(phoneDir, f), path.join(dist, 'assets', 'phone', f));
 }
 let bytes = 0;

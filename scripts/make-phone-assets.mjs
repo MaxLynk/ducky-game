@@ -40,6 +40,23 @@ export function readGlb(buf) {
   return { json, bin };
 }
 
+// What the build must refuse: a source changed since its variant was made (stale), a variant whose own
+// bytes differ from the manifest (corrupt), or a variant the manifest names that is not there (missing).
+export function phoneProblems(assetsDir, names) {
+  const problems = { stale: [], corrupt: [], missing: [] };
+  const { files } = JSON.parse(fs.readFileSync(path.join(assetsDir, 'phone', 'manifest.json'), 'utf8'));
+  for (const f of names) {
+    const src = path.join(assetsDir, f);
+    if (fs.existsSync(src) === false) continue;
+    if (files[f]?.source_sha256 !== sha256(fs.readFileSync(src))) { problems.stale.push(f); continue; }
+    if (files[f].phone === null) continue;
+    const phone = path.join(assetsDir, files[f].phone);
+    if (fs.existsSync(phone) === false) problems.missing.push(files[f].phone);
+    else if (sha256(fs.readFileSync(phone)) !== files[f].phone_sha256) problems.corrupt.push(files[f].phone);
+  }
+  return problems;
+}
+
 function writeGlb(json, bin) {
   const pad = (b, fill) => Buffer.concat([b, Buffer.alloc((4 - (b.length % 4)) % 4, fill)]);
   const jsonChunk = pad(Buffer.from(JSON.stringify(json)), 0x20);
