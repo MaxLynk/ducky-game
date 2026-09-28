@@ -224,7 +224,7 @@ const STILLS = [
   ['stair-companion-from-top', 'stair_top', Math.PI, -0.35], ['stair-companion-from-foot', 'stair_bottom', 0, 0.3],
   ['deck-lower-hall', 'lower_aft', Math.PI, 0], ['deck-lower-sleeping-room-1', 'sleep1', Math.PI / 2, -0.1],
   ['deck-lower-avionics', 'avionics_door', Math.PI, 0], ['deck-lower-pellet-room', 'pellet_fwd', 0, -0.1],
-  ['deck-lower-reactor', 'reactor_fwd', 0.6, 0], ['deck-hold-garage', 'hold_fwd', 0, 0],
+  ['deck-lower-reactor', 'pellet_aft', 0, 0], ['deck-lower-reactor-walkway', 'reactor_walk_fwd', 0, 0], ['deck-hold-garage', 'hold_fwd', 0, 0],
   ['deck-hold-cargo', 'hold_aft', Math.PI, 0], ['stair-gallery', 'gallery_head', 0.4, -0.3],
   ['elevator-main-landing', 'elev_main', -Math.PI / 2, 0], ['elevator-car', 'elev_car', -Math.PI / 2, 0],
   ['cockpit', 'cockpit_aisle', Math.PI, -0.05],

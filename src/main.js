@@ -555,7 +555,7 @@ function stepWorld(dt) {
     o.visible = related;
   });
   scene.environmentIntensity = showInterior ? 0.75 : 0.3;
-  cockpitLight.intensity = aboard.state.consoleOn ? 6 : 0;
+  cockpitLight.visible = aboard.state.consoleOn; // an unlit light stays out of every shader
   world.update(shipState);
   ducky.update({ ...s, throwing: s.t < throwPoseUntil }, dt);
   scene.updateMatrixWorld(true);
@@ -654,7 +654,7 @@ async function start() {
   shipRays = createRayIndex(hull);
   interiorRoot.rotation.copy(holder.rotation); interiorRoot.position.copy(holder.position); scene.add(interiorRoot);
   // The lighting-backup console lights the cockpit when it is switched on.
-  cockpitLight = new THREE.PointLight(0xffd9a0, 0, 7, 1.6); cockpitLight.position.set(19.2, 3.7, 0); interiorRoot.add(cockpitLight);
+  cockpitLight = new THREE.PointLight(0xffd9a0, 6, 7, 1.6); cockpitLight.visible = false; cockpitLight.position.set(19.2, 3.7, 0); interiorRoot.add(cockpitLight);
   ducky = createDucky(duckG); scene.add(ducky.root);
   world = buildWorld(scene);
   world.register('ducky', ducky.root, 'Ducky'); world.register('ship', ship, 'The Iceberg'); world.register('set', set, 'Ice plain');
