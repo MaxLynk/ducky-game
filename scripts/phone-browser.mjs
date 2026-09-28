@@ -4,12 +4,17 @@
 //   recover     Pixel 7 landscape: walk, lose the WebGL context mid-play, restore it; the game comes
 //               back at the same place, as bright as before, and answers touch again
 //   landscape   Pixel 7 landscape: Inspect, then tap Return (touch) and click Return (mouse)
-//   gpu         Pixel 7 portrait and landscape: GPU memory proxies (texture and renderbuffer bytes
-//               allocated, drawing buffer, draw calls, and renderer.info where the build exposes it)
+//   phone-assets  Pixel 7 portrait and landscape fetch only the phone variants named in
+//               assets/phone/manifest.json and decode no image over the caps; iPad mini and desktop
+//               still fetch the originals
+//   paused-loss Pixel 7 landscape, live loop: lose the context while walking; nothing moves while
+//               the card is up and nothing jumps after restore
+//   gpu         measurement only, never fails: Pixel 7 transfer bytes, Chrome renderer and GPU
+//               process RSS peaks (Linux /proc), texture and renderbuffer bytes, renderer.info
 //   render      Pixel 7 portrait, iPad mini and desktop still load and draw the scene
 // Usage: node scripts/phone-browser.mjs --out=PATH [--dist=PATH] [--jobs=no-webgl2,lost,landscape,render]
 // Exits 1 if any check fails. Serve only 127.0.0.1. Set TMPDIR to a local writable directory.
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,7 +24,7 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   const [k, v] = a.replace(/^--/, '').split('=');
   return [k, v ?? true];
 }));
-const jobs = String(args.jobs || 'no-webgl2,lost,recover,landscape,render,gpu').split(',');
+const jobs = String(args.jobs || 'no-webgl2,lost,recover,paused-loss,phone-assets,landscape,render,gpu').split(',');
 const outDir = path.resolve(String(args.out || 'browser-out'));
 const chrome = String(args.chrome || process.env.CHROME || 'google-chrome');
 fs.mkdirSync(outDir, { recursive: true });
@@ -95,11 +100,17 @@ async function open(cdp, url, profileName, log, init = null) {
   cdp.listeners.length = 0;
   cdp.listeners.push((msg) => {
     if (msg.method === 'Runtime.consoleAPICalled') log.push(`${msg.params.type}: ${msg.params.args.map((a) => a.value ?? a.description).join(' ')}`);
+    if (msg.method === 'Network.requestWillBeSent') cdp.requests?.push(msg.params.request.url);
+    if (msg.method === 'Network.loadingFinished' && cdp.bytes) cdp.bytes.total += msg.params.encodedDataLength;
     if (msg.method === 'Runtime.exceptionThrown') log.push(`exception: ${msg.params.exceptionDetails.exception?.description ?? msg.params.exceptionDetails.text}`);
   });
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
+  await cdp.send('Network.enable');
+  await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
   await cdp.send('Page.navigate', { url: 'about:blank' });
+  await sleep(200);
+  cdp.requests = []; cdp.bytes = { total: 0 };
   await sleep(200);
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: p.width, height: p.height, deviceScaleFactor: p.deviceScaleFactor, mobile: p.mobile });
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: p.touch, maxTouchPoints: p.touch ? 5 : 1 });
@@ -258,21 +269,122 @@ const GPU_HOOK = `(() => {
   wrap('renderbufferStorageMultisample', (gl, [, samples, , w, h]) => { tally.renderbuffers += w * h * 4 * Math.max(1, samples); });
 })();`;
 
-async function gpu(cdp, base) {
+// Resident memory of this Chrome's renderer and GPU processes, from /proc (Linux only).
+function chromeRss(profileDir) {
+  const out = { renderer: 0, gpu: 0 };
+  let pids = [];
+  try { pids = execFileSync('pgrep', ['-f', profileDir]).toString().trim().split('\n'); } catch { return out; }
+  for (const pid of pids) {
+    try {
+      const cmd = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+      const kb = Number(/VmRSS:\s+(\d+)/.exec(fs.readFileSync(`/proc/${pid}/status`, 'utf8'))?.[1] || 0);
+      if (cmd.includes('--type=renderer')) out.renderer = Math.max(out.renderer, kb);
+      if (cmd.includes('--type=gpu-process')) out.gpu = Math.max(out.gpu, kb);
+    } catch {}
+  }
+  return out;
+}
+
+async function gpu(cdp, base, profileDir) {
   const result = {};
   for (const profile of ['pixel-portrait', 'pixel-landscape']) {
     const log = [];
+    await cdp.send('Page.navigate', { url: 'about:blank' });
+    await sleep(1500);
+    const peak = { renderer: 0, gpu: 0 };
+    let sampling = true;
+    const sampler = (async () => { while (sampling) { const r = chromeRss(profileDir); peak.renderer = Math.max(peak.renderer, r.renderer); peak.gpu = Math.max(peak.gpu, r.gpu); await sleep(100); } })();
     await open(cdp, base + '/', profile, log, GPU_HOOK);
     const ready = await waitReady(cdp);
-    await sleep(3000);
+    await sleep(5000);
+    sampling = false; await sampler;
     const m = await cdp.eval(`(() => { const d = window.__dk; const m = d.metrics(); const b = window.__gpuBytes;
       return { phone: d.phone ?? null, quality: d.quality ?? null, canvas: m.canvas, pixel_ratio: m.pixel_ratio,
         draw_calls_avg: m.draw_calls_avg, triangles_avg: m.triangles_avg,
         texture_mb: +(b.textures / 1048576).toFixed(1), renderbuffer_mb: +(b.renderbuffers / 1048576).toFixed(1),
         renderer_info: d.gpu ? d.gpu() : 'not exposed by this build' }; })()`);
-    result[profile] = { ready, ...m };
+    result[profile] = { ready, transfer_mb: +(cdp.bytes.total / 1e6).toFixed(2), rss_peak_mb: { renderer: +(peak.renderer / 1024).toFixed(0), gpu_process: +(peak.gpu / 1024).toFixed(0) }, ...m };
   }
-  return { ...result, pass: true };
+  return { ...result, measurement: true, pass: true };
+}
+
+// Records the size of every image the page decodes: ImageBitmaps (GLTFLoader) and <img> (the sky).
+const DECODE_HOOK = `(() => {
+  const seen = window.__decoded = [];
+  const cib = window.createImageBitmap;
+  window.createImageBitmap = function (...a) { return cib.apply(this, a).then((b) => { seen.push({ kind: 'bitmap', width: b.width, height: b.height }); return b; }); };
+  const d = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+  Object.defineProperty(HTMLImageElement.prototype, 'src', { ...d, set(v) {
+    this.addEventListener('load', () => seen.push({ kind: 'img', src: String(v).split('/').pop(), width: this.naturalWidth, height: this.naturalHeight }), { once: true });
+    d.set.call(this, v); } });
+})();`;
+
+async function phoneAssets(cdp, base) {
+  const manifest = await fetch(base + '/assets/phone/manifest.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const result = {};
+  for (const profile of ['pixel-portrait', 'pixel-landscape', 'ipad-mini', 'desktop']) {
+    const log = [];
+    await open(cdp, base + '/', profile, log, DECODE_HOOK);
+    const ready = await waitReady(cdp);
+    const decoded = await cdp.eval('window.__decoded');
+    const assets = cdp.requests.filter((u) => u.includes('/assets/')).map((u) => new URL(u).pathname.replace(/^\/assets\//, ''));
+    const phoneProfile = PROFILES[profile].width < 600 || PROFILES[profile].height < 600;
+    let checks;
+    if (phoneProfile) {
+      const expected = manifest ? Object.entries(manifest.files).map(([name, e]) => e.phone || name) : [];
+      const replaced = manifest ? Object.entries(manifest.files).filter(([, e]) => e.phone).map(([name]) => name) : [];
+      checks = {
+        manifest_fetched: assets.includes('phone/manifest.json'),
+        every_phone_variant_fetched: manifest !== null && expected.every((f) => assets.includes(f)),
+        no_full_size_original_fetched: manifest !== null && replaced.every((f) => assets.includes(f) === false),
+        decoded_textures_at_512: decoded.filter((d) => d.kind === 'bitmap').length > 0 && decoded.filter((d) => d.kind === 'bitmap').every((d) => Math.max(d.width, d.height) <= 512),
+        decoded_sky_at_2048: decoded.some((d) => d.src === 'sky.jpg' && d.width === 2048),
+      };
+    } else {
+      checks = {
+        originals_fetched: ['ducky-ice.glb', 'ducky-helmet.glb', 'sky.jpg', 'set.glb', 'ship.glb'].every((f) => assets.includes(f)),
+        no_phone_variant_fetched: assets.every((f) => f.startsWith('phone/') === false),
+        sky_full_size: decoded.some((d) => d.src === 'sky.jpg' && d.width === 4096),
+      };
+    }
+    result[profile] = { checks, pass: Object.values(checks).every(Boolean), ready, transfer_mb: +(cdp.bytes.total / 1e6).toFixed(2), assets, decoded };
+  }
+  return { ...result, pass: Object.values(result).filter((r) => typeof r === 'object').every((r) => r.pass) };
+}
+
+async function pausedLoss(cdp, base) {
+  const log = [];
+  const pos = () => cdp.eval('(() => { const s = window.__dk.state(); return { x: s.x, y: s.y, t: s.t, speed: s.speed }; })()');
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  await open(cdp, base + '/', 'pixel-landscape', log);
+  const ready = await waitReady(cdp);
+  await sleep(500);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 150, y: 300, id: 1 }] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 150, y: 230, id: 1 }] });
+  await sleep(700);
+  const walking = [await pos()]; await sleep(200); walking.push(await pos());
+  await cdp.eval(`(() => { window.__lose = document.getElementById('view').getContext('webgl2').getExtension('WEBGL_lose_context'); window.__lose.loseContext(); })()`);
+  const card = await waitFor(cdp, SCREEN, 5);
+  const lostStart = await pos();
+  await sleep(1500);
+  const lostEnd = await pos();
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.eval('window.__lose.restoreContext()');
+  const after = [];
+  const t0 = Date.now();
+  while (Date.now() - t0 < 1500) { after.push(await pos()); await sleep(30); }
+  let maxStep = 0;
+  for (let i = 1; i < after.length; i++) maxStep = Math.max(maxStep, dist(after[i], after[i - 1]));
+  const checks = {
+    was_walking_before_loss: dist(walking[1], walking[0]) > 0.1,
+    card_shown: card.seconds !== null,
+    no_movement_while_lost: dist(lostEnd, lostStart) < 1e-6 && lostEnd.t === lostStart.t,
+    no_jump_on_restore: dist(after[0], lostEnd) < 0.1 && maxStep < 0.15,
+    held_input_cleared: dist(after.at(-1), lostEnd) < 0.6,
+  };
+  return { checks, pass: Object.values(checks).every(Boolean), ready, walking_m: dist(walking[1], walking[0]),
+    moved_while_lost_m: dist(lostEnd, lostStart), first_step_after_restore_m: dist(after[0], lostEnd), max_step_after_restore_m: maxStep,
+    drift_after_restore_m: dist(after.at(-1), lostEnd), console: log.slice(0, 8) };
 }
 
 async function landscape(cdp, base) {
@@ -342,10 +454,10 @@ const result = { dist, jobs: {} };
 try {
   result.browser = (await cdp.send('Browser.getVersion')).product;
   for (const job of jobs) {
-    const fn = { 'no-webgl2': noWebgl2, lost, recover, landscape, render, gpu }[job];
+    const fn = { 'no-webgl2': noWebgl2, lost, recover, 'paused-loss': pausedLoss, 'phone-assets': phoneAssets, landscape, render, gpu }[job];
     if (fn === undefined) throw new Error('Unknown job: ' + job);
-    result.jobs[job] = await fn(cdp, base).catch((err) => ({ pass: false, error: String(err?.message || err) }));
-    console.log(job, result.jobs[job].pass ? 'PASS' : 'FAIL');
+    result.jobs[job] = await fn(cdp, base, profile).catch((err) => ({ pass: false, error: String(err?.message || err) }));
+    console.log(job, result.jobs[job].measurement ? 'MEASURED' : result.jobs[job].pass ? 'PASS' : 'FAIL');
   }
 } finally {
   proc.kill('SIGKILL'); server.close();

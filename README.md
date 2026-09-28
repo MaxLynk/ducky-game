@@ -25,7 +25,7 @@ Ducky can belly-slide on the ice, slow to a stop on packed snow, aim and throw s
 
 Open `http://127.0.0.1:5317/`. The local server binds to localhost. The build in `dist/` is a static site, so any static host can serve it; `duckys.app` builds and serves it on Vercel as set in [vercel.json](vercel.json). All scripts, models and textures are served from the same origin. There is no CDN, paid service or login.
 
-The build needs `assets/{ship,set,ducky-ice,ducky-helmet}.glb`, `sky.jpg`, `collision.json` and `provenance.json`. All of them are committed in `assets/` under [ASSETS-LICENSE.md](ASSETS-LICENSE.md). An incomplete build fails with the missing names.
+The build needs `assets/{ship,set,ducky-ice,ducky-helmet}.glb`, `sky.jpg`, `collision.json` and `provenance.json`. All of them are committed in `assets/` under [ASSETS-LICENSE.md](ASSETS-LICENSE.md). An incomplete build fails with the missing names. Phones load the variants in `assets/phone/` instead (textures 512 px, sky 2048 px). After any change to `assets/`, rebuild them with `node scripts/make-phone-assets.mjs` (needs ffmpeg); the build refuses variants made from different assets.
 
 ## Controls
 

@@ -21,10 +21,11 @@ const DEMO = params.has('demo');
 const CAPTURE = params.has('capture');
 const COLLIDE = params.get('collision') !== 'off';
 // Phone quality profile: a touch screen whose short side is under 600 CSS px (a phone, not an
-// iPad mini or a desktop) gets a smaller drawing buffer, shadow map and textures, because Android
+// iPad mini or a desktop) gets a smaller drawing buffer and shadow map, and loads the phone asset
+// variants (textures 512 px, sky 2048 px, from scripts/make-phone-assets.mjs), because Android
 // Chrome drops the WebGL context when GPU memory runs short.
 const PHONE = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 600;
-const QUALITY = PHONE ? { dpr: 1.25, shadow: 1024, texture: 512, sky: 2048 } : { dpr: 1.5, shadow: 2048, texture: Infinity, sky: Infinity };
+const QUALITY = PHONE ? { dpr: 1.25, shadow: 1024 } : { dpr: 1.5, shadow: 2048 };
 const DPR = Math.min(window.devicePixelRatio || 1, Number(params.get('dpr') || QUALITY.dpr));
 
 const api = { ready: false, error: null, phone: PHONE, quality: QUALITY };
@@ -59,6 +60,7 @@ function createRenderer() {
   canvas.addEventListener('webglcontextrestored', restored);
 }
 let envTarget = null;
+let paused = false; // true while the WebGL context is lost: the world holds still behind the card
 function buildEnvironment() {
   const pmrem = new THREE.PMREMGenerator(renderer);
   envTarget?.dispose();
@@ -76,41 +78,17 @@ function showProblem(err) {
 // keeps the game state; the browser restores the context because the event is prevented.
 function lost(event) {
   event.preventDefault(); api.contextLost = (api.contextLost || 0) + 1; problemEl.dataset.lost = 'yes';
+  paused = true; input?.clear();
   showProblem(new Error('WebGL context lost'));
 }
 // Textures, geometry and shaders re-upload by themselves; the PMREM environment and the shadow
 // map were rendered on the GPU, so they are drawn again. The player stays where they were.
 function restored() {
   api.error = null; problemEl.classList.add('hidden'); delete problemEl.dataset.lost;
+  paused = false; input?.clear();
   buildEnvironment();
   if (api.ready === false) { loadingEl.classList.remove('hidden'); return; }
   renderer.shadowMap.needsUpdate = true; resize(); render();
-}
-
-// Scales a texture's image down to fit max px on its longest side (phone profile only).
-// Textures that share one image share one scaled canvas.
-const fitted = new Map();
-function fitTexture(texture, max) {
-  const img = texture?.image;
-  if (Boolean(img) === false || Math.max(img.width, img.height) <= max) return;
-  if (fitted.has(img) === false) {
-    const k = max / Math.max(img.width, img.height);
-    const c = document.createElement('canvas');
-    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    fitted.set(img, c);
-  }
-  texture.image = fitted.get(img); texture.needsUpdate = true;
-}
-function fitTextures(root, max) {
-  if (max === Infinity) return;
-  const seen = new Set();
-  root.traverse((o) => {
-    if (o.isMesh !== true) return;
-    for (const m of [o.material].flat()) for (const v of Object.values(m)) {
-      if (v?.isTexture && seen.has(v) === false) { seen.add(v); fitTexture(v, max); }
-    }
-  });
 }
 
 const scene = new THREE.Scene();
@@ -237,16 +215,22 @@ function planarUVs(geo, size) {
 async function load() {
   const loader = new GLTFLoader();
   const base = new URL('./assets/', document.baseURI);
+  // The phone asks for its variants by name before anything large is fetched or decoded.
+  const phone = PHONE ? await fetch(new URL('phone/manifest.json', base)).then((r) => {
+    if (!r.ok) throw new Error(`phone/manifest.json ${r.status}`);
+    return r.json();
+  }) : null;
+  const asset = (name) => new URL(phone?.files[name]?.phone || name, base).href;
   const [setG, duckIce, duckHelmet, shipG, gridJson, sky] = await Promise.all([
-    loader.loadAsync(new URL('set.glb', base).href),
-    loader.loadAsync(new URL('ducky-ice.glb', base).href),
-    loader.loadAsync(new URL('ducky-helmet.glb', base).href),
-    loader.loadAsync(new URL('ship.glb', base).href),
+    loader.loadAsync(asset('set.glb')),
+    loader.loadAsync(asset('ducky-ice.glb')),
+    loader.loadAsync(asset('ducky-helmet.glb')),
+    loader.loadAsync(asset('ship.glb')),
     fetch(new URL('collision.json', base)).then((r) => {
       if (!r.ok) throw new Error(`collision.json ${r.status}`);
       return r.json();
     }),
-    new THREE.TextureLoader().loadAsync(new URL('sky.jpg', base).href),
+    new THREE.TextureLoader().loadAsync(asset('sky.jpg')),
   ]);
   return { setG, duckG: { ice: duckIce.scene, helmet: duckHelmet.scene }, shipG, gridJson, sky };
 }
@@ -388,6 +372,7 @@ function updateCamera(dt, r) {
 }
 
 function stepWorld(dt) {
+  if (paused) return;
   const s = sim.state;
   const raw = input.read();
   const r = { ...raw, ...(manual || (demo ? demo.read(s) : {})) };
@@ -495,9 +480,6 @@ function webglName() {
 async function start() {
   createRenderer();
   const { setG, duckG, shipG, gridJson, sky } = await load();
-  if (QUALITY.sky !== Infinity) fitTexture(sky, QUALITY.sky);
-  for (const g of [setG.scene, duckG.ice, duckG.helmet, shipG.scene]) fitTextures(g, QUALITY.texture);
-  fitted.clear();
   sky.mapping = THREE.EquirectangularReflectionMapping; sky.colorSpace = THREE.SRGBColorSpace; scene.background = sky;
   set = mergeByMaterial(setG.scene, 'set');
   const bricks = brickTexture();
@@ -586,6 +568,7 @@ async function start() {
   if (CAPTURE === false) {
     let last = null;
     const loop = (now) => {
+      if (paused) { last = null; requestAnimationFrame(loop); return; } // restart the clock on restore, no jump
       if (last === null) last = now;
       const dt = Math.max(0, Math.min(0.05, (now - last) / 1000));
       if (now > last) metrics.ms.push(now - last);
