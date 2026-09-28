@@ -11,7 +11,7 @@ const dir = path.resolve(process.argv[3] || path.join(here, '..', 'dist'));
 const host = '127.0.0.1';
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.glb': 'model/gltf-binary', '.jpg': 'image/jpeg', '.png': 'image/png',
-  '.mp4': 'video/mp4' };
+  '.mp4': 'video/mp4', '.mjs': 'text/javascript', '.wasm': 'application/wasm' };
 
 export function serve(root = dir, p = port, h = host) {
   const server = http.createServer((req, res) => {

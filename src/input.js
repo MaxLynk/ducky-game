@@ -3,6 +3,9 @@ export function createInput(doc = document) {
   const keys = new Set();
   const queued = new Set();
   const actions = { Space: 'slide', KeyF: 'throw', KeyE: 'interact', KeyV: 'inspect', Escape: 'exit' };
+  // The elevator car's buttons: 1 main deck, 2 reactor deck, 3 hold.
+  const stops = { Digit1: 'MAIN', Digit2: 'LOWER', Digit3: 'HOLD', Numpad1: 'MAIN', Numpad2: 'LOWER', Numpad3: 'HOLD' };
+  let stop = null;
   const stick = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
   const look = { id: null, x: 0, y: 0, dx: 0, dy: 0, zoom: 0 };
   const pointer = { x: 0, y: 0, active: false };
@@ -12,12 +15,13 @@ export function createInput(doc = document) {
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'SELECT') return;
     if (actions[e.code] && e.repeat === false) queued.add(actions[e.code]);
+    if (stops[e.code] && e.repeat === false) stop = stops[e.code];
     if (actions[e.code] || e.code.startsWith('Arrow')) e.preventDefault();
     keys.add(e.code);
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
   function clear() {
-    keys.clear(); queued.clear(); stick.id = null; look.id = null; stick.x = 0; stick.y = 0;
+    keys.clear(); queued.clear(); stop = null; stick.id = null; look.id = null; stick.x = 0; stick.y = 0;
     look.dx = 0; look.dy = 0; stickEl.classList.add('hidden');
   }
   window.addEventListener('blur', clear);
@@ -73,6 +77,7 @@ export function createInput(doc = document) {
         turn: Number(keys.has('KeyL')) - Number(keys.has('KeyJ')),
         tilt: Number(keys.has('KeyO')) - Number(keys.has('KeyU')) };
       for (const name of ['slide', 'throw', 'interact', 'inspect', 'exit']) r[name] = queued.has(name);
+      if (stop) { r.stop = stop; stop = null; }
       queued.clear(); look.dx = 0; look.dy = 0; look.zoom = 0;
       return r;
     },

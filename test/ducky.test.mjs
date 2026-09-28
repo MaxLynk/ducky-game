@@ -39,8 +39,9 @@ test('the surface the sim reports picks the export: spawn is ice, the cockpit de
   sim.step(1 / 30, { x: 0, y: 0 });
   assert.equal(sim.state.surface, 'ice');
   assert.equal(outfitFor(sim.state.surface), 'ice');
-  assert.equal(surfaceAt(-16.0, 27.0), 'deck'); // the forward cockpit, layout.js
-  assert.equal(outfitFor(surfaceAt(-16.0, 27.0)), 'helmet');
+  // The airlock doorway (layout.js); past it he is aboard, where the game reports deck everywhere.
+  assert.equal(surfaceAt(-2.0, 21.0), 'deck');
+  assert.equal(outfitFor(surfaceAt(-2.0, 21.0)), 'helmet');
 });
 
 test('walking aboard swaps to the helmet export, and back on the ice swaps it off', () => {

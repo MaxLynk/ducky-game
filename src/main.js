@@ -3,16 +3,22 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import RAPIER from '@dimforge/rapier3d-compat';
 import { decodeGrid } from './grid.js';
 import { createSim } from './sim.js';
 import { createInput } from './input.js';
 import { createDucky } from './ducky.js';
 import { createMilestoneDemo } from './demo.js';
 import { createRayIndex } from './ray-index.js';
-import { buildWorld, cutAirlock } from './world.js';
-import { createShipState, shipWalkable, surfaceAt, inShip } from './layout.js';
+import { buildWorld, cutBox, AIRLOCK_PORTAL, AIRLOCK_DOOR_SLAB, inPortal } from './world.js';
+import { createShipState, shipWalkable, surfaceAt } from './layout.js';
+import { loadGLB, nodeName } from './gltf-load.js';
+import { createShip, BOARD_Y, LEAVE_Y, CELL_NAMES, STOP_NAMES } from './ship.js';
+import { createRouteDriver } from './route-driver.js';
 import { createInspect } from './inspect.js';
 import { createSnowballs, trajectory, aimAt } from './snowballs.js';
 
@@ -166,6 +172,19 @@ function tameMaterials(root) {
   });
 }
 
+// Six of the walkable Iceberg's materials are procedural in Blender and reach glTF as plain white
+// (no colour, no texture). Until the export bakes them, the game gives each the colour its name
+// states, only when it arrives as that untextured white.
+const STAND_IN = { int_deck: 0x6b5a48, int_wall_lightbrown: 0xb08a64, plate_tractoryellow: 0xe0b43a, floor_cream: 0xe6d9b8,
+  dark_fitting: 0x2e3338, brick_sand: 0xc9a77a };
+function standInColours(root) {
+  root.traverse((o) => {
+    if (o.isMesh !== true) return;
+    const m = o.material;
+    if (STAND_IN[m.name] !== undefined && !m.map && m.color.r === 1 && m.color.g === 1 && m.color.b === 1) m.color.setHex(STAND_IN[m.name]);
+  });
+}
+
 // The ice wall is one big box in the export; give it the plain's brick coursing, drawn here so
 // no image asset is involved: 0.8 m bricks in running bond, 0.4 m courses.
 function brickTexture() {
@@ -212,30 +231,127 @@ function planarUVs(geo, size) {
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
 }
 
+const base = new URL('./assets/', document.baseURI);
+const json = (url) => fetch(url).then((r) => {
+  if (!r.ok) throw new Error(`${url.pathname || url} ${r.status}`);
+  return r.json();
+});
+let shipLoader = null;
+let ktx2 = null;
+// The walkable Iceberg's GLBs are meshopt geometry with KTX2 textures; the transcoder is local.
+function exportLoader() {
+  if (shipLoader) return shipLoader;
+  ktx2 = new KTX2Loader().setTranscoderPath(new URL('../vendor/three/examples/jsm/libs/basis/', base).href).detectSupport(renderer);
+  shipLoader = new GLTFLoader().setKTX2Loader(ktx2).setMeshoptDecoder(MeshoptDecoder);
+  return shipLoader;
+}
+// Every cell GLB embeds the same three hull textures; keep one GPU copy of each.
+const sharedTextures = new Map();
+function shareTextures(root) {
+  const slots = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap'];
+  root.traverse((o) => {
+    if (o.isMesh !== true) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      for (const slot of slots) {
+        const t = m[slot];
+        if (!t || !t.name || !t.image) continue;
+        const key = [slot, t.name, t.image.width, t.image.height, t.offset.x, t.offset.y, t.repeat.x, t.repeat.y, t.rotation].join('|');
+        const kept = sharedTextures.get(key);
+        if (kept === undefined) sharedTextures.set(key, t);
+        else if (kept !== t) { m[slot] = kept; t.dispose(); }
+      }
+    }
+  });
+}
+
 async function load() {
   const loader = new GLTFLoader();
-  const base = new URL('./assets/', document.baseURI);
   // The phone asks for its variants by name before anything large is fetched or decoded.
-  const phone = PHONE ? await fetch(new URL('phone/manifest.json', base)).then((r) => {
-    if (!r.ok) throw new Error(`phone/manifest.json ${r.status}`);
-    return r.json();
-  }) : null;
+  const phone = PHONE ? await json(new URL('phone/manifest.json', base)) : null;
   const asset = (name) => new URL(phone?.files[name]?.phone || name, base).href;
-  const [setG, duckIce, duckHelmet, shipG, gridJson, sky] = await Promise.all([
+  const runtime = await json(new URL('iceberg/runtime.json', base));
+  const shipFile = (slug) => new URL('iceberg/' + runtime.cells[slug][PHONE ? 'phone' : 'desktop'], base).href;
+  const collision = Object.entries(runtime.cells).filter(([, c]) => c.collision).map(async ([slug, c]) => {
+    const r = await fetch(new URL('iceberg/' + c.collision, base));
+    if (!r.ok) throw new Error(`iceberg/${c.collision} ${r.status}`);
+    return { slug, file: c.collision, scene: (await loadGLB(await r.arrayBuffer())).scene };
+  });
+  const [setG, duckIce, duckHelmet, exteriorG, gridJson, sky, collisionScenes] = await Promise.all([
     loader.loadAsync(asset('set.glb')),
     loader.loadAsync(asset('ducky-ice.glb')),
     loader.loadAsync(asset('ducky-helmet.glb')),
-    loader.loadAsync(asset('ship.glb')),
-    fetch(new URL('collision.json', base)).then((r) => {
-      if (!r.ok) throw new Error(`collision.json ${r.status}`);
-      return r.json();
-    }),
+    exportLoader().loadAsync(shipFile('iceberg-exterior')),
+    json(new URL('collision.json', base)),
     new THREE.TextureLoader().loadAsync(asset('sky.jpg')),
+    Promise.all(collision),
+    RAPIER.init(),
   ]);
-  return { setG, duckG: { ice: duckIce.scene, helmet: duckHelmet.scene }, shipG, gridJson, sky };
+  return { setG, duckG: { ice: duckIce.scene, helmet: duckHelmet.scene }, exteriorG, gridJson, sky, runtime, collisionScenes, shipFile };
 }
 
-let sim, ducky, input, grid, world, ship, set, snow, demo, shipRays, sourceCockpit;
+// The rooms stream in after the ice plain is playable; boarding waits for them.
+async function loadInterior(runtime, shipFile) {
+  const slugs = Object.keys(runtime.cells).filter((s) => s !== 'iceberg-exterior' && runtime.cells[s].desktop);
+  await Promise.all(slugs.map(async (slug) => {
+    const g = await exportLoader().loadAsync(shipFile(slug));
+    shareTextures(g.scene); tameMaterials(g.scene); standInColours(g.scene);
+    if (slug === 'iceberg-airlock') cutBox(g.scene, AIRLOCK_DOOR_SLAB, 'game-airlock-door-v1');
+    const cell = new THREE.Group(); cell.name = 'iceberg:' + slug; cell.add(g.scene);
+    cell.userData.slug = slug;
+    interiorRoot.add(cell);
+    cells.set(slug, cell);
+    world.register('iceberg:' + slug.replace(/^iceberg-/, ''), cell, 'The Iceberg: ' + (CELL_NAMES[slug] || slug).toLowerCase());
+    if (slug === 'iceberg-elevator') bindElevator(g.scene);
+    const option = document.createElement('option'); option.value = 'iceberg:' + slug.replace(/^iceberg-/, '');
+    option.textContent = world.models.get(option.value).label; el('model-select').add(option);
+  }));
+  ktx2.dispose(); // every texture is in; the transcoder workers and their memory go
+  hullSides(true); await renderer.compileAsync(scene, camera); hullSides(false); // both hull programs ready before boarding
+  api.interiorReady = true;
+}
+
+// Aboard, a room is drawn with the rooms within two portals of it (the export's own neighbour
+// lists) and the hull, which is the rooms' outer skin. Everything else is out of sight.
+const nearby = new Map();
+function inSight(runtime, cell) {
+  if (nearby.has(cell) === false) {
+    const near = new Set([cell, 'iceberg-elevator']);
+    for (const a of runtime.neighbours[cell] || []) { near.add(a); for (const b of runtime.neighbours[a] || []) near.add(b); }
+    nearby.set(cell, near);
+  }
+  return nearby.get(cell);
+}
+const HULL_ABOARD = new Set(['hull_walnut_aft', 'canopy_glass']);
+const hullMaterials = new Set();
+let hullDouble = null;
+function hullSides(double) {
+  if (hullDouble === double) return;
+  hullDouble = double;
+  for (const m of hullMaterials) m.side = double ? THREE.DoubleSide : THREE.FrontSide;
+}
+
+// The elevator's car, car doors and landing doors are drawn from nodes that share their collider's
+// name; each frame they take the pose the physics gave the collider.
+const elevatorParts = [];
+function bindElevator(root) {
+  root.updateMatrixWorld(true);
+  const moving = [];
+  root.traverse((o) => { const e = aboard.registry.get(nodeName(o)); if (e?.moving) moving.push([o, e]); });
+  for (const [o, e] of moving) {
+    root.attach(o);
+    elevatorParts.push({ o, e, rest: o.position.clone() });
+  }
+}
+function syncElevator() {
+  for (const { o, e, rest } of elevatorParts) {
+    o.position.set(rest.x + e.pose.x - e.closedTranslation.x, rest.y + e.pose.y - e.closedTranslation.y, rest.z + e.pose.z - e.closedTranslation.z);
+  }
+}
+
+let sim, ducky, input, grid, world, ship, set, snow, demo, shipRays, aboard, driver = null, cockpitLight, runtimeManifest;
+const interiorRoot = new THREE.Group();
+interiorRoot.name = 'iceberg:interior';
+const cells = new Map();
 const shipState = createShipState();
 const inspect = createInspect();
 let camYaw = Math.PI / 2;
@@ -253,6 +369,7 @@ const ray = new THREE.Raycaster();
 const vecA = new THREE.Vector3();
 const vecB = new THREE.Vector3();
 const normalMatrix = new THREE.Matrix3();
+const cutaway = new THREE.Plane();
 const ballsGroup = new THREE.Group();
 const splatsGroup = new THREE.Group();
 scene.add(ballsGroup, splatsGroup);
@@ -270,20 +387,19 @@ scene.add(marker);
 const el = (id) => document.getElementById(id);
 
 function toast(message) { el('toast').textContent = message; toastUntil = sim.state.t + 2.8; }
-function portal(p) { return p.x > -3.25 && p.x < -0.75 && p.y > -0.05 && p.y < 2.95 && p.z < -19 && p.z > -24; }
+const portal = inPortal;
 function cast(a, b) {
+  // Aboard, a snowball meets the ship's own colliders: walls, decks, doors and the elevator car.
+  if (inside) return aboard.castRay(a, b);
   vecA.set(a.x, a.z, -a.y);
   vecB.set(b.x - a.x, b.z - a.z, -(b.y - a.y));
   const length = vecB.length();
   if (length < 0.00001) return null;
   ray.set(vecA, vecB.normalize()); ray.far = length + 0.03;
   const objects = [...world.targetMeshes];
-  if (Math.max(a.y, b.y) > 18) {
-    if (inside) world.inside.traverse((o) => { if (o.isMesh === true) objects.push(o); });
-    else if (shipState.door < 0.9) objects.push(world.door);
-  }
+  if (Math.max(a.y, b.y) > 18 && shipState.door < 0.9) objects.push(world.door);
   const hits = ray.intersectObjects(objects, false);
-  if (inside === false && Math.max(a.y, b.y) > 18) hits.push(...shipRays.intersect(ray).filter((h) => portal(h.point) === false));
+  if (Math.max(a.y, b.y) > 18) hits.push(...shipRays.intersect(ray).filter((h) => portal(h.point) === false));
   hits.sort((a, b) => a.distance - b.distance);
   const hit = hits[0];
   if (hit) {
@@ -362,8 +478,9 @@ function updateCamera(dt, r) {
   camPitch = r.lookPitch ?? Math.max(-0.6, Math.min(0.85, camPitch - r.lookY * 0.004 + r.tilt * dt));
   const s = sim.state;
   if (inside) {
-    camera.position.set(s.x, 1.3, -s.y);
-    camera.lookAt(s.x + Math.cos(camYaw) * 5, 1.3 + Math.sin(camPitch) * 5, -(s.y + Math.sin(camYaw) * 5));
+    const eye = s.z + 1.3; // his eyes, on whatever deck or stair he stands
+    camera.position.set(s.x, eye, -s.y);
+    camera.lookAt(s.x + Math.cos(camYaw) * 5, eye + Math.sin(camPitch) * 5, -(s.y + Math.sin(camYaw) * 5));
   } else {
     const distance = 5.3;
     camera.position.set(s.x - Math.cos(camYaw) * distance, 2.3 + camPitch * 3, -(s.y - Math.sin(camYaw) * distance));
@@ -375,9 +492,9 @@ function stepWorld(dt) {
   if (paused) return;
   const s = sim.state;
   const raw = input.read();
-  const r = { ...raw, ...(manual || (demo ? demo.read(s) : {})) };
+  const r = { ...raw, ...(driver ? driver.read(s) : manual || (demo ? demo.read(s) : {})) };
   if (r.inspectId) selectModel(r.inspectId);
-  if (r.inspect) { if (inspect.selected) exitInspect(); else selectModel(inside ? 'blockout:cockpit' : 'ducky'); }
+  if (r.inspect) { if (inspect.selected) exitInspect(); else selectModel(inside ? 'iceberg:' + aboard.state.cell.replace(/^iceberg-/, '') : 'ducky'); }
   if (r.exit) exitInspect();
   const inspecting = Boolean(inspect.selected);
   if (inspecting === false) {
@@ -387,21 +504,43 @@ function stepWorld(dt) {
     sim.step(dt, { x, y, slide: r.slide });
     if (r.interact) {
       const result = shipState.interact(s.x, s.y);
+      const used = result === null && inside ? aboard.interact(s, r.stop) : null;
       if (result === 'door') toast(shipState.doorTarget ? 'Airlock opening' : 'Airlock closing');
-      else if (result === 'console') toast(shipState.consoleOn ? 'Lighting backup online' : 'Lighting backup off');
       else if (result === 'doorway-occupied') toast('Step clear of the door first');
-      else toast('Walk closer to the airlock or cockpit console');
+      else if (used?.kind === 'call') toast('Elevator called to the ' + STOP_NAMES[used.stop]);
+      else if (used?.kind === 'press') toast('Going to the ' + STOP_NAMES[used.stop]);
+      else if (used?.kind === 'cockpit-up') toast('Up into the cockpit');
+      else if (used?.kind === 'cockpit-down') toast('Down to the main deck');
+      else if (used?.kind === 'console') toast(used.on ? 'Lighting backup online' : 'Lighting backup off');
+      else toast(inside ? 'Walk closer to the airlock, the elevator or the cockpit' : 'Walk closer to the airlock');
+    } else if (r.stop && inside && aboard.inCar()) {
+      aboard.interact(s, r.stop); toast('Going to the ' + STOP_NAMES[r.stop]);
     }
   } else s.t += dt;
   shipState.step(dt);
-  inside = inShip(s.x, s.y);
-  const interiorInspect = inspect.selected?.startsWith('blockout:');
-  const showInterior = inspecting ? Boolean(interiorInspect) : inside;
-  ship.visible = inspecting ? inspect.selected === 'ship' : inside === false;
-  sourceCockpit.visible = inspect.selected === 'ship:cockpit-of-record';
-  for (const part of sourceCockpit.children) part.visible = part.name === 'cockpit:structure' ? el('cutaway').checked === false : true;
+  aboard.setOuterDoor(shipState.door > 0.9);
+  // Through the open airlock he boards the physics ship; walking back out he returns to the ice.
+  if (inside === false && s.y > BOARD_Y && api.interiorReady && shipWalkable(s.x, s.y, shipState, sim.tuning.radius) === true) {
+    aboard.board(s); sim.setMover(aboard.tick);
+  } else if (inside && s.y < LEAVE_Y && s.z < 0.5) {
+    aboard.leave(s); sim.setMover(null);
+  }
+  if (aboard.aboard === false && inspecting === false) aboard.idle(dt);
+  inside = aboard.aboard;
+  syncElevator();
+  const cellInspect = inspect.selected?.startsWith('iceberg:') ? world.models.get(inspect.selected)?.object : null;
+  const showInterior = inspecting ? Boolean(cellInspect) : inside;
+  ship.visible = inspecting ? inspect.selected === 'ship' : true;
+  interiorRoot.visible = inspecting ? Boolean(cellInspect) : true;
+  const sight = inside ? inSight(runtimeManifest, aboard.state.cell) : null;
+  for (const [slug, cell] of cells) cell.visible = inspecting ? cell === cellInspect : inside ? sight.has(slug) : slug === 'iceberg-airlock' || slug === 'iceberg-workshop';
+  for (const part of ship.children) part.visible = inspecting || inside === false || HULL_ABOARD.has(part.material?.name);
+  hullSides(inside && inspecting === false);
+  // The inspector's cutaway takes the deckhead off a room: everything above the room's floor plus
+  // 2.1 m is clipped while the room is inspected.
+  renderer.clippingPlanes = cellInspect && el('cutaway').checked ? [cutaway.set(new THREE.Vector3(0, -1, 0), new THREE.Box3().setFromObject(cellInspect).min.y + 2.1)] : [];
   set.visible = inspecting ? inspect.selected === 'set' : inside === false;
-  world.inside.visible = inspecting ? Boolean(interiorInspect) : true;
+  world.inside.visible = inspecting ? inspect.selected?.startsWith('airlock:') : inside === false || s.z < 0.5;
   world.outside.visible = inspecting ? inspect.selected?.startsWith('target:') || inspect.selected?.startsWith('packed-') : inside === false;
   ducky.root.visible = inspecting ? inspect.selected === 'ducky' : inside === false;
   const selectedObject = world.models.get(inspect.selected)?.object;
@@ -414,15 +553,15 @@ function stepWorld(dt) {
     let ancestor = selectedObject;
     while (ancestor) { if (ancestor === o) related = true; ancestor = ancestor.parent; }
     o.visible = related;
-    if (interiorInspect && el('cutaway').checked && /ceiling|wall|header|bulkhead/.test(o.name)) o.visible = false;
   });
   scene.environmentIntensity = showInterior ? 0.75 : 0.3;
+  cockpitLight.intensity = aboard.state.consoleOn ? 6 : 0;
   world.update(shipState);
   ducky.update({ ...s, throwing: s.t < throwPoseUntil }, dt);
   scene.updateMatrixWorld(true);
   updateCamera(dt, r);
   camera.updateMatrixWorld();
-  const origin = { x: s.x + Math.cos(camYaw) * 0.48, y: s.y + Math.sin(camYaw) * 0.48, z: s.mode === 'slide' ? 0.5 : 1.0 };
+  const origin = { x: s.x + Math.cos(camYaw) * 0.48, y: s.y + Math.sin(camYaw) * 0.48, z: s.z + (s.mode === 'slide' ? 0.5 : 1.0) };
   const aim = getAim(r, origin);
   if (r.throw && inspecting === false) {
     if (snow.throw(origin, aim.yaw, aim.pitch)) throwPoseUntil = s.t + 0.35;
@@ -455,10 +594,15 @@ function stepWorld(dt) {
   el('toast').classList.toggle('show', s.t < toastUntil);
   el('speed').textContent = s.speed.toFixed(1) + ' m/s'; el('surface').textContent = s.surface.toUpperCase();
   el('snow-status').textContent = snow.cooldown > 0 ? 'PACKING ' + snow.cooldown.toFixed(1) + 's' : 'SNOWBALL READY';
-  el('place').textContent = inside ? s.x <= -12 ? 'THE ICEBERG / COCKPIT' : 'THE ICEBERG / MAIN DECK' : 'THE ICE PLAIN';
+  const cell = aboard.state.cell;
+  const inCockpit = inside && cell === 'iceberg-cockpit';
+  el('place').textContent = inside ? 'THE ICEBERG / ' + (CELL_NAMES[cell] || 'ABOARD') : 'THE ICE PLAIN';
   el('chapter').textContent = inside ? '02 / ABOARD THE ICEBERG' : '01 / A LITTLE MOMENTUM';
-  el('objective').textContent = inside ? s.x < -12 ? 'A seat among the stars.' : 'Welcome aboard.' : s.mode === 'slide' ? 'Let it slide.' : 'The ice is yours.';
-  el('hint').textContent = inside ? s.x < -12 ? 'Walk beside the pilot seat. Use the console to test the lighting.' : 'Follow the light strips forward to the cockpit.' : nameShown ? 'Use the airlock, then walk through the doorway.' : 'Slide on ice. Try a snowball on a target, the ice or the hull.';
+  el('objective').textContent = inside ? inCockpit ? 'A seat among the stars.' : 'Welcome aboard.' : s.mode === 'slide' ? 'Let it slide.' : 'The ice is yours.';
+  el('hint').textContent = inside ? inCockpit ? 'Use the console to test the lighting. Use the door behind you to go back down.'
+    : aboard.inCar() ? 'Press 1 main deck, 2 reactor deck, 3 hold, or use the panel to go to the next stop.'
+      : 'Forward is the cockpit: use the vestibule to go up. The stairs and the elevator go below.'
+    : nameShown ? api.interiorReady ? 'Use the airlock, then walk through the doorway.' : 'The ship is still loading.' : 'Slide on ice. Try a snowball on a target, the ice or the hull.';
   el('crosshair').style.left = r.pointer?.active ? ((r.pointer.x + 1) * 50) + '%' : '50%';
   el('crosshair').style.top = r.pointer?.active ? ((1 - r.pointer.y) * 50) + '%' : '48%';
   if (statusEl.dataset.on) statusEl.textContent = s.mode + ' x ' + s.x.toFixed(2) + ' y ' + s.y.toFixed(2) + ' | hits ' + JSON.stringify(hitCounts);
@@ -479,7 +623,8 @@ function webglName() {
 
 async function start() {
   createRenderer();
-  const { setG, duckG, shipG, gridJson, sky } = await load();
+  const { setG, duckG, exteriorG, gridJson, sky, runtime, collisionScenes, shipFile } = await load();
+  runtimeManifest = runtime;
   sky.mapping = THREE.EquirectangularReflectionMapping; sky.colorSpace = THREE.SRGBColorSpace; scene.background = sky;
   set = mergeByMaterial(setG.scene, 'set');
   const bricks = brickTexture();
@@ -495,53 +640,68 @@ async function start() {
   grid = decodeGrid(gridJson);
   const holder = new THREE.Group();
   holder.rotation.y = THREE.MathUtils.degToRad(grid.ship.yaw_deg); holder.position.set(grid.ship.offset[0], 0, -grid.ship.offset[1]);
-  holder.add(shipG.scene); shipRays = createRayIndex(holder); ship = mergeByMaterial(holder, 'ship'); tameMaterials(ship); cutAirlock(ship); scene.add(ship);
-  // Preserve the actual raised cockpit at its authored position for model review.
-  // It is separate from the flat navigation blockout until stair traversal exists.
-  sourceCockpit = new THREE.Group();
-  sourceCockpit.name = 'ship:cockpit-of-record';
-  const cockpitParts = { structure: new THREE.Group(), fittings: new THREE.Group() };
-  holder.traverse((o) => {
-    if (o.isMesh === true && /^(cockpit_|console_|seat_|radar_|chair_|scope_)/.test(o.name)) {
-      const copy = new THREE.Mesh(o.geometry, o.material);
-      copy.matrix.copy(o.matrixWorld); copy.matrixAutoUpdate = false;
-      const key = /wall|deckhead|ceiling|overhead|door|canopy/.test(o.name) ? 'structure' : 'fittings';
-      cockpitParts[key].add(copy);
-    }
-  });
-  for (const [name, group] of Object.entries(cockpitParts)) sourceCockpit.add(mergeByMaterial(group, 'cockpit:' + name));
-  scene.add(sourceCockpit);
+  // The walkable export's exterior, where the ship model sat before; its hull collider answers
+  // snowball rays outside, and the Rapier world is built from every collision GLB.
+  ship = exteriorG.scene; ship.name = 'ship'; holder.add(ship); scene.add(holder);
+  shareTextures(ship); tameMaterials(ship); standInColours(ship); cutBox(ship, AIRLOCK_PORTAL, 'game-airlock-v2');
+  // The rooms are built inside the hull and use it as their outer skin, so aboard the hull is drawn
+  // from both sides (hullSides below); outside, its front faces are enough.
+  ship.traverse((o) => { if (o.isMesh === true) hullMaterials.add(o.material); });
+  aboard = createShip(RAPIER, { manifest: runtime, collisionScenes, ship: grid.ship, warn: (m) => console.warn(m) });
+  const hull = new THREE.Group();
+  hull.rotation.copy(holder.rotation); hull.position.copy(holder.position);
+  hull.add(collisionScenes.find((c) => c.slug === 'iceberg-hull').scene);
+  shipRays = createRayIndex(hull);
+  interiorRoot.rotation.copy(holder.rotation); interiorRoot.position.copy(holder.position); scene.add(interiorRoot);
+  // The lighting-backup console lights the cockpit when it is switched on.
+  cockpitLight = new THREE.PointLight(0xffd9a0, 0, 7, 1.6); cockpitLight.position.set(19.2, 3.7, 0); interiorRoot.add(cockpitLight);
   ducky = createDucky(duckG); scene.add(ducky.root);
   world = buildWorld(scene);
   world.register('ducky', ducky.root, 'Ducky'); world.register('ship', ship, 'The Iceberg'); world.register('set', set, 'Ice plain');
-  world.register('ship:cockpit-of-record', sourceCockpit, 'Cockpit (Blender model of record)');
-  sim = createSim(grid, { collide: COLLIDE, surface: surfaceAt, free: (x, y, r) => shipWalkable(x, y, shipState, r) });
+  sim = createSim(grid, { collide: COLLIDE, surface: (x, y) => (aboard.aboard ? 'deck' : surfaceAt(x, y)),
+    free: (x, y, r) => shipWalkable(x, y, shipState, r, aboard.aboard) });
   input = createInput(document);
   snow = createSnowballs({ collide: cast, onHit: (event) => {
     hitCounts[event.kind] = (hitCounts[event.kind] || 0) + 1;
     console.log('SNOW_HIT ' + JSON.stringify(event));
-    toast(event.kind === 'target' ? 'A snowy bullseye' : event.kind === 'hull' ? 'Splat on The Iceberg' : 'Splat on the ice');
+    toast(event.kind === 'target' ? 'A snowy bullseye' : event.kind === 'hull' ? 'Splat on The Iceberg' : event.kind === 'ship' ? 'Splat aboard The Iceberg' : 'Splat on the ice');
     if (event.kind === 'target') world.targetMeshes.find((o) => o.userData.targetId === event.target)?.material.color.setHex(0xe8b769);
   } });
-  if (DEMO) demo = createMilestoneDemo(grid);
+  if (DEMO) demo = createMilestoneDemo(grid, aboard);
   const selector = el('model-select');
   for (const [id, entry] of world.models) {
     const option = document.createElement('option'); option.value = id; option.textContent = entry.label; selector.add(option);
   }
   selector.addEventListener('change', () => selectModel(selector.value));
+  // Capture steps simulated time faster than the rooms can stream, so it waits for them.
+  const interior = loadInterior(runtime, shipFile);
+  if (CAPTURE) await interior;
+  else interior.catch(showProblem);
   await renderer.compileAsync(scene, camera);
   ducky.update(sim.state, 0); stepWorld(0); window.addEventListener('resize', resize); resize();
   if (params.has('debug')) statusEl.dataset.on = '1';
   Object.assign(api, {
-    ready: true, webgl: webglName(), bones: ducky.bones.length, joints: ducky.joints, outfits: ducky.outfits,
+    ready: true, readyMs: performance.now(), webgl: webglName(), bones: ducky.bones.length, joints: ducky.joints, outfits: ducky.outfits,
     meshes: { set: set.children.length, ship: ship.children.length },
     state: () => ({ ...sim.state, nameShown, camYaw, camPitch, inside, door: shipState.door, doorTarget: shipState.doorTarget,
-      consoleOn: shipState.consoleOn, outfit: ducky.outfit(), shipEvents: [...shipState.events], hits: [...snow.hits], hitCounts: { ...hitCounts }, cooldown: snow.cooldown,
+      consoleOn: aboard.state.consoleOn, outfit: ducky.outfit(), shipEvents: [...shipState.events, ...aboard.state.events], hits: [...snow.hits], hitCounts: { ...hitCounts }, cooldown: snow.cooldown,
       projectiles: snow.balls.map((b) => ({ ...b })), splats: snow.splats.length, inspect: inspect.selected,
       camera: camera.position.toArray(), inspectTarget: [...inspect.target], hatch: grid.ship.hatch, name: grid.ship.name,
-      demoPhase: demo?.phase, demoEvents: demo?.events, preview: previewPoint }),
-    advance(dt = 1 / 30, n = 1) { for (let i = 0; i < n; i++) stepWorld(dt); render(); return api.state(); },
+      demoPhase: demo?.phase, demoEvents: demo?.events, preview: previewPoint, ship: aboard.snapshot(), interiorReady: Boolean(api.interiorReady),
+      route: driver ? { done: driver.done, failed: driver.failed, log: driver.log, leg: driver.leg } : null }),
+    advance(dt = 1 / 30, n = 1) {
+      for (let i = 0; i < n; i++) { stepWorld(dt); if (driver && (driver.done || driver.failed)) break; }
+      render(); return api.state();
+    },
     setInput(value) { manual = value; },
+    // Test hooks: walk a route of the export's waypoints with player input, or stand at a waypoint.
+    drive(route, opts) { driver = route ? createRouteDriver(aboard, route, opts) : null; return api.state(); },
+    place(name) {
+      if (aboard.aboard === false) { aboard.board(sim.state); sim.setMover(aboard.tick); }
+      aboard.place(name, sim.state); inside = true; return api.advance(1 / 60, 1);
+    },
+    look(yaw, pitch = 0) { camYaw = yaw; camPitch = pitch; return api.advance(1 / 60, 1); },
+    interiorLoaded: () => interior,
     gpu: () => ({ memory: { ...renderer.info.memory }, render: { ...renderer.info.render }, programs: renderer.info.programs?.length,
       pixelRatio: renderer.getPixelRatio(), canvas: [canvas.width, canvas.height], shadowMap: QUALITY.shadow, phone: PHONE }),
     selectModel, exitInspect,

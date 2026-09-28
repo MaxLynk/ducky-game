@@ -1,15 +1,16 @@
 {
-  "generator": "Blender 5.3.0 Alpha, private Blender export pipeline; FFmpeg JPEG conversion",
+  "generator": "Blender 5.3.0 Alpha, private Blender export pipeline; FFmpeg JPEG conversion; glTF-Transform 4.5.0 for the walkable Iceberg",
   "device": "CPU exports and CPU sky render",
   "sourceIds": [
-    "ship-solid-ring/v1",
+    "ducky.place.iceberg-interior/v1",
     "ice-plain/v1",
     "ducky-v2/ice",
     "ducky-v2/helmet"
   ],
   "assets": {
-    "ship.glb": {
-      "sha256": "3e6740bf752874a8932840917c21c25285d0a660cd8ea0ab888b4eac17cc206d"
+    "iceberg/iceberg.manifest.json": {
+      "sha256": "ab45ed1d40a9dbc4d622b8a40a005f6fffcdc79fe38a5f191036108eb6229567",
+      "note": "The walkable Iceberg export. The manifest carries the sha256 of every file in assets/iceberg; the build refuses a file that differs."
     },
     "set.glb": {
       "sha256": "86d616adaf3b75eb24df19dc3fb13b570c91916acf69adb55c882bd3c0a8dd87"
