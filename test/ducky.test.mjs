@@ -20,7 +20,7 @@ function figure(bones = LIMBS) {
   scene.add(spine);
   for (const name of bones) {
     const b = new THREE.Bone();
-    b.name = name;
+    b.name = THREE.PropertyBinding.sanitizeNodeName(name); // as GLTFLoader names it
     spine.add(b);
   }
   return scene;
@@ -59,7 +59,7 @@ test('walking aboard swaps to the helmet export, and back on the ice swaps it of
   }
   assert.deepEqual(seen, ['ice', 'ice', 'helmet', 'helmet', 'ice']);
   // the waddle drives the worn export's own thigh
-  const thigh = helmet.getObjectByName('DEF-thigh.L');
+  const thigh = helmet.getObjectByName('DEF-thighL');
   d.update({ ...s, surface: 'deck', walkPhase: 1.3 }, 1 / 30);
   assert.ok(thigh.quaternion.angleTo(new THREE.Quaternion()) > 0.01);
 });
@@ -76,6 +76,35 @@ function glbJson(file) {
 
 const assets = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets');
 const have = ['ducky-ice.glb', 'ducky-helmet.glb'].every((f) => fs.existsSync(path.join(assets, f)));
+// The committed exports through the game's own loader, so a bone name the loader rewrites goes red here.
+// Node cannot decode the embedded images; the loader reports each and carries on without them.
+async function loadGlb(name) {
+  globalThis.self ??= globalThis;
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const b = fs.readFileSync(path.join(assets, name));
+  const error = console.error;
+  console.error = () => {};
+  try {
+    return (await new GLTFLoader().parseAsync(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength), '')).scene;
+  } finally {
+    console.error = error;
+  }
+}
+test('the loaded exports drive all four limbs in both outfits', { skip: have ? false : 'asset pack not present' }, async () => {
+  const ice = await loadGlb('ducky-ice.glb');
+  const helmet = await loadGlb('ducky-helmet.glb');
+  const d = createDucky({ ice, helmet });
+  assert.deepEqual(d.joints, { lThigh: true, rThigh: true, lArm: true, rArm: true });
+  const limbs = (scene) => LIMBS.map((n) => scene.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(n)));
+  const s = { x: 0, y: 0, heading: 0, mode: 'walk', speed: 1, walkPhase: 0.2 };
+  for (const [surface, scene] of [['ice', ice], ['deck', helmet]]) {
+    d.update({ ...s, surface }, 1 / 30);
+    const before = limbs(scene).map((b) => b.quaternion.clone());
+    d.update({ ...s, surface, walkPhase: 1.3 }, 1 / 30);
+    limbs(scene).forEach((b, i) => assert.ok(b.quaternion.angleTo(before[i]) > 0.01, surface + ' ' + LIMBS[i]));
+  }
+});
+
 test('the two exports share one skeleton; only the helmet export carries the helmet and visor', { skip: have ? false : 'asset pack not present' }, () => {
   const ice = glbJson(path.join(assets, 'ducky-ice.glb'));
   const helmet = glbJson(path.join(assets, 'ducky-helmet.glb'));

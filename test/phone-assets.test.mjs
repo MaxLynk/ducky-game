@@ -46,3 +46,28 @@ test('phone GLBs keep structure and cap images', { skip: have === false }, () =>
   const size = imageSize(fs.readFileSync(path.join(assets, sky.phone || 'sky.jpg')));
   assert.ok(size.width <= CAPS.sky, `sky ${size.width}x${size.height}`);
 });
+
+test('the build check refuses a phone output whose bytes differ from its manifest, source unchanged', async () => {
+  const { phoneProblems } = await import('../scripts/make-phone-assets.mjs');
+  const os = await import('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-phone-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'phone'));
+    const source = Buffer.from('source model bytes');
+    const phone = Buffer.from('phone model bytes');
+    fs.writeFileSync(path.join(dir, 'x.glb'), source);
+    fs.writeFileSync(path.join(dir, 'phone', 'x.glb'), phone);
+    const entry = { source_sha256: sha256(source), phone: 'phone/x.glb', phone_sha256: sha256(phone) };
+    fs.writeFileSync(path.join(dir, 'phone', 'manifest.json'), JSON.stringify({ files: { 'x.glb': entry } }));
+    assert.deepEqual(phoneProblems(dir, ['x.glb']), { stale: [], corrupt: [], missing: [] });
+    const mutated = Buffer.from(phone); mutated[0] ^= 1; // one byte of the output only; manifest and source untouched
+    fs.writeFileSync(path.join(dir, 'phone', 'x.glb'), mutated);
+    assert.deepEqual(phoneProblems(dir, ['x.glb']), { stale: [], corrupt: ['phone/x.glb'], missing: [] });
+    fs.rmSync(path.join(dir, 'phone', 'x.glb'));
+    assert.deepEqual(phoneProblems(dir, ['x.glb']).missing, ['phone/x.glb']);
+    fs.writeFileSync(path.join(dir, 'x.glb'), Buffer.from('changed source'));
+    assert.deepEqual(phoneProblems(dir, ['x.glb']).stale, ['x.glb']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

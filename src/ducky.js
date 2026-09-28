@@ -56,7 +56,8 @@ export function createDucky(models) {
     return { b, rest: b.quaternion.clone(), fwd: axis(AXES.fwd), lat: axis(AXES.lat), up: axis(AXES.up) };
   }
   for (const o of Object.values(outfits)) {
-    o.J = Object.fromEntries(Object.entries(LIMBS).map(([k, bone]) => [k, joint(o.model, o.bones[bone])]));
+    // GLTFLoader names nodes with PropertyBinding.sanitizeNodeName, so DEF-thigh.L loads as DEF-thighL.
+    o.J = Object.fromEntries(Object.entries(LIMBS).map(([k, bone]) => [k, joint(o.model, o.bones[THREE.PropertyBinding.sanitizeNodeName(bone)])]));
   }
   const q = new THREE.Quaternion();
   function pose(j, turns) {
