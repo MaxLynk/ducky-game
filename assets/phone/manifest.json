@@ -6,18 +6,18 @@
   },
   "files": {
     "ducky-helmet.glb": {
-      "source_sha256": "248a2699eea0673f8ceed87c3064c873517544dab1f413b08638a888523373b2",
-      "source_bytes": 5052476,
+      "source_sha256": "fa43b7cedc36a0b0b0bb737348ab25ae21d9163aaff066eb66304c2d380c90d5",
+      "source_bytes": 7695036,
       "phone": "phone/ducky-helmet.glb",
-      "phone_sha256": "e26e1443271625efe0fd0b1aafa0d9ce998832e8907a37fcace4a9f4bb0139d9",
-      "phone_bytes": 4972172
+      "phone_sha256": "ec18c21e9e64b4a55955544c3f9448f718107f48b40e6353580f3efd11bca2d5",
+      "phone_bytes": 7654400
     },
     "ducky-ice.glb": {
-      "source_sha256": "85e1edd7a46f73bb19d8b580c6748d265c203db4f2078e7e133dd7de9abd512c",
-      "source_bytes": 2542836,
+      "source_sha256": "ecda1a44444529840c193037f722dc6c74d336476a05b83f8d181599eac87e77",
+      "source_bytes": 2675208,
       "phone": "phone/ducky-ice.glb",
-      "phone_sha256": "2256abf5d96e244441f53e0374cc728745b413c473e7d645a544db9e592dfd1b",
-      "phone_bytes": 2462532
+      "phone_sha256": "7ec54a26e25105004835e6a1ef5174d155131a7ff4da5a9d7cf246aecfd27047",
+      "phone_bytes": 2633272
     },
     "set.glb": {
       "source_sha256": "86d616adaf3b75eb24df19dc3fb13b570c91916acf69adb55c882bd3c0a8dd87",
