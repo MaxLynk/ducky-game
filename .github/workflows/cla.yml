@@ -39,7 +39,7 @@ jobs:
           path-to-document: https://github.com/MaxLynk/ducky-game/blob/main/CLA.md
           path-to-signatures: signatures/version1/cla.json
           branch: signatures
-          allowlist: 'Odium-bot,*[bot]'
+          allowlist: 'Odium-bot,ElendsDad,*[bot]'
           lock-pullrequest-aftermerge: 'false'
           create-file-commit-message: Create CLA signature record
           signed-commit-message: Record CLA signature
