@@ -6,11 +6,11 @@
   },
   "files": {
     "ducky-helmet.glb": {
-      "source_sha256": "fa43b7cedc36a0b0b0bb737348ab25ae21d9163aaff066eb66304c2d380c90d5",
-      "source_bytes": 7695036,
+      "source_sha256": "9ffda7cabcef84696d8b829fb94b81e3a5ceeac49275774e631f3bb4293cc9aa",
+      "source_bytes": 4355172,
       "phone": "phone/ducky-helmet.glb",
-      "phone_sha256": "ec18c21e9e64b4a55955544c3f9448f718107f48b40e6353580f3efd11bca2d5",
-      "phone_bytes": 7654400
+      "phone_sha256": "ff0ebf0df25852de392a98341f6d65b2523be43e386f902aaefb70b2e45119f2",
+      "phone_bytes": 4314532
     },
     "ducky-ice.glb": {
       "source_sha256": "ecda1a44444529840c193037f722dc6c74d336476a05b83f8d181599eac87e77",
