@@ -25,7 +25,7 @@ Ducky can belly-slide on the ice, slow to a stop on packed snow, aim and throw s
 
 Open `http://127.0.0.1:5317/`. The local server binds to localhost. The build in `dist/` is a static site, so any static host can serve it; `duckys.app` builds and serves it on Vercel as set in [vercel.json](vercel.json). All scripts, models and textures are served from the same origin. There is no CDN, paid service or login.
 
-The build needs `assets/{ship,set,ducky-ice,ducky-helmet}.glb`, `sky.jpg`, `collision.json` and `provenance.json`. All of them are committed in `assets/` under [ASSETS-LICENSE.md](ASSETS-LICENSE.md). An incomplete build fails with the missing names.
+The build needs `assets/{ship,set,ducky-ice,ducky-helmet}.glb`, `sky.jpg`, `collision.json` and `provenance.json`. All of them are committed in `assets/` under [ASSETS-LICENSE.md](ASSETS-LICENSE.md). An incomplete build fails with the missing names. Phones load the variants in `assets/phone/` instead (textures 512 px, sky 2048 px). After any change to `assets/`, rebuild them with `node scripts/make-phone-assets.mjs` (needs ffmpeg); the build refuses variants made from different assets.
 
 ## Controls
 
@@ -58,8 +58,11 @@ The code is MIT licensed under [LICENSE](LICENSE). The Ducky assets are copyrigh
     npm test
     npm run licences
     node scripts/milestone-browser.mjs --jobs=verify,controls,metrics,capture --out=review-output
+    node scripts/phone-browser.mjs --out=review-output
 
 The browser tool launches local Chrome, records page requests, drives the production simulation and uses real keyboard, mouse and touch events for the control tests. Any failed acceptance check or off-origin page request fails the run. It writes JSON evidence, stills and a 60 second 1920 by 1080 MP4. Capture uses fixed simulation steps and 30 fps encoding; the separate metrics job measures wall-clock animation frames for a full minute.
+
+`scripts/phone-browser.mjs` checks phones: the start-problem card when WebGL2 is unavailable, recovery after a lost WebGL context, the landscape Return button, rendering on Pixel, iPad mini and desktop profiles, and GPU memory proxies for the phone quality profile.
 
 The browser tool accepts `--egl-vendor=FILE` to select an installed GPU driver on a computer with multiple GPUs. The measured RTX 5070 Ti result is 59.93 fps over a full minute at 1920 by 1080. The tool records the actual renderer. That result does not claim performance for an integrated GPU or an untested phone. Browser profiles and captured frames are temporary; set TMPDIR to a local writable directory for verification.
 
