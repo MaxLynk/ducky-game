@@ -20,35 +20,102 @@ const params = new URLSearchParams(location.search);
 const DEMO = params.has('demo');
 const CAPTURE = params.has('capture');
 const COLLIDE = params.get('collision') !== 'off';
-const DPR = Math.min(window.devicePixelRatio || 1, Number(params.get('dpr') || 1.5));
+// Phone quality profile: a touch screen whose short side is under 600 CSS px (a phone, not an
+// iPad mini or a desktop) gets a smaller drawing buffer, shadow map and textures, because Android
+// Chrome drops the WebGL context when GPU memory runs short.
+const PHONE = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 600;
+const QUALITY = PHONE ? { dpr: 1.25, shadow: 1024, texture: 512, sky: 2048 } : { dpr: 1.5, shadow: 2048, texture: Infinity, sky: Infinity };
+const DPR = Math.min(window.devicePixelRatio || 1, Number(params.get('dpr') || QUALITY.dpr));
 
-const api = { ready: false, error: null };
+const api = { ready: false, error: null, phone: PHONE, quality: QUALITY };
 window.__dk = api;
 
 const canvas = document.getElementById('view');
 const loadingEl = document.getElementById('loading');
 const nameEl = document.getElementById('name');
 const statusEl = document.getElementById('status');
+const problemEl = document.getElementById('start-problem');
 
-const renderer = new THREE.WebGLRenderer({
-  canvas,
-  antialias: true,
-  powerPreference: 'high-performance',
-  preserveDrawingBuffer: CAPTURE,
-});
-renderer.setPixelRatio(DPR);
-renderer.setSize(window.innerWidth, window.innerHeight, false);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.NoToneMapping; // Blender's Standard view, not AgX
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
+// A phone without WebGL2 (blocked after a GPU crash, or no hardware acceleration) throws here,
+// so the renderer is built inside start() where a failure reaches showProblem().
+let renderer;
+function createRenderer() {
+  renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: true,
+    powerPreference: 'high-performance',
+    preserveDrawingBuffer: CAPTURE,
+  });
+  renderer.setPixelRatio(DPR);
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping; // Blender's Standard view, not AgX
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  buildEnvironment();
+  // Registered after the renderer's own handlers, so three has re-created its GL state before
+  // restored() rebuilds what lived only on the GPU.
+  canvas.addEventListener('webglcontextlost', lost);
+  canvas.addEventListener('webglcontextrestored', restored);
+}
+let envTarget = null;
+function buildEnvironment() {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  envTarget?.dispose();
+  envTarget = pmrem.fromScene(new RoomEnvironment(), 0.04);
+  scene.environment = envTarget.texture;
+  pmrem.dispose();
+}
+
+// Replaces the loading screen with the plain start-problem card; the error goes to the console.
+function showProblem(err) {
+  console.error(err); api.error = String(err?.message || err);
+  loadingEl.classList.add('hidden'); problemEl.classList.remove('hidden');
+}
+// A lost context (Android under GPU memory pressure, or switching apps) shows the same card and
+// keeps the game state; the browser restores the context because the event is prevented.
+function lost(event) {
+  event.preventDefault(); api.contextLost = (api.contextLost || 0) + 1; problemEl.dataset.lost = 'yes';
+  showProblem(new Error('WebGL context lost'));
+}
+// Textures, geometry and shaders re-upload by themselves; the PMREM environment and the shadow
+// map were rendered on the GPU, so they are drawn again. The player stays where they were.
+function restored() {
+  api.error = null; problemEl.classList.add('hidden'); delete problemEl.dataset.lost;
+  buildEnvironment();
+  if (api.ready === false) { loadingEl.classList.remove('hidden'); return; }
+  renderer.shadowMap.needsUpdate = true; resize(); render();
+}
+
+// Scales a texture's image down to fit max px on its longest side (phone profile only).
+// Textures that share one image share one scaled canvas.
+const fitted = new Map();
+function fitTexture(texture, max) {
+  const img = texture?.image;
+  if (Boolean(img) === false || Math.max(img.width, img.height) <= max) return;
+  if (fitted.has(img) === false) {
+    const k = max / Math.max(img.width, img.height);
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    fitted.set(img, c);
+  }
+  texture.image = fitted.get(img); texture.needsUpdate = true;
+}
+function fitTextures(root, max) {
+  if (max === Infinity) return;
+  const seen = new Set();
+  root.traverse((o) => {
+    if (o.isMesh !== true) return;
+    for (const m of [o.material].flat()) for (const v of Object.values(m)) {
+      if (v?.isTexture && seen.has(v) === false) { seen.add(v); fitTexture(v, max); }
+    }
+  });
+}
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x0a0f1e, 60, 190);
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 4000);
-
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.3;
 
 // B0-00's three lights, re-aimed for real time: warm moon rim from behind-right, cold fill from
@@ -59,7 +126,7 @@ function blenderDir(x, y, z) {
 const moon = new THREE.DirectionalLight(0xffdca0, 2.4);
 const moonDir = blenderDir(8, 9, 2.4 + 2.0);
 moon.castShadow = true;
-moon.shadow.mapSize.set(2048, 2048);
+moon.shadow.mapSize.set(QUALITY.shadow, QUALITY.shadow);
 moon.shadow.camera.left = -7;
 moon.shadow.camera.right = 7;
 moon.shadow.camera.top = 7;
@@ -426,7 +493,11 @@ function webglName() {
 }
 
 async function start() {
+  createRenderer();
   const { setG, duckG, shipG, gridJson, sky } = await load();
+  if (QUALITY.sky !== Infinity) fitTexture(sky, QUALITY.sky);
+  for (const g of [setG.scene, duckG.ice, duckG.helmet, shipG.scene]) fitTextures(g, QUALITY.texture);
+  fitted.clear();
   sky.mapping = THREE.EquirectangularReflectionMapping; sky.colorSpace = THREE.SRGBColorSpace; scene.background = sky;
   set = mergeByMaterial(setG.scene, 'set');
   const bricks = brickTexture();
@@ -489,6 +560,8 @@ async function start() {
       demoPhase: demo?.phase, demoEvents: demo?.events, preview: previewPoint }),
     advance(dt = 1 / 30, n = 1) { for (let i = 0; i < n; i++) stepWorld(dt); render(); return api.state(); },
     setInput(value) { manual = value; },
+    gpu: () => ({ memory: { ...renderer.info.memory }, render: { ...renderer.info.render }, programs: renderer.info.programs?.length,
+      pixelRatio: renderer.getPixelRatio(), canvas: [canvas.width, canvas.height], shadowMap: QUALITY.shadow, phone: PHONE }),
     selectModel, exitInspect,
     replaceModel: async (id, url) => {
       const local = new URL(url, document.baseURI);
@@ -524,7 +597,4 @@ async function start() {
     requestAnimationFrame(loop);
   }
 }
-start().catch((err) => {
-  console.error(err); api.error = String(err?.message || err);
-  loadingEl.textContent = 'The exported assets did not load. See README.md to rebuild them.';
-});
+start().catch(showProblem);
