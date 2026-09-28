@@ -12,7 +12,7 @@ sha256 for each.
 | ducky-ice.glb | ecda1a44444529840c193037f722dc6c74d336476a05b83f8d181599eac87e77 | 2,675,208 | 71,828 |
 
 - **Source IDs:** unchanged, `ducky-v2/helmet` and `ducky-v2/ice`.
-- **Generator:** Blender 5.3.0 Alpha (Khronos glTF Blender I/O v5.3.32), through the private Blender export pipeline, on the CPU.
+- **Generator:** Blender 5.3.0 Alpha, through the private Blender export pipeline, on the CPU. Both files record `Khronos glTF Blender I/O v5.3.19` in `asset.generator`. The round 3 exports they replace recorded v5.3.32.
 - **Determinism:** a second export gave the same bytes for both files.
 - **What changed from the exports in the game now:** they were Ducky v2 round 3. These are round 7.
   - The approved round 4 helmet, with its liner and two lamp pods.
