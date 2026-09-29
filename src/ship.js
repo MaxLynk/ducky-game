@@ -24,6 +24,15 @@ export const CELL_NAMES = {
 // its wall, with a gap between the two lines so he never flickers between the sims.
 export const BOARD_Y = 21.05;
 export const LEAVE_Y = 20.95;
+const LEAVE_AT = LEAVE_Y - 0.02; // where leave() stands him on the ice
+// Walking back out, the capsule reaches the leave line anywhere along the airlock's aft wall, door
+// open or shut. The ice sim takes him only where it can stand him: at the leave spot, through the
+// open outer door and clear of both jambs with its wider footprint (0.3 m to the capsule's 0.22).
+// Anywhere else the ship's physics keeps him, so he walks on instead of being stranded on the hull.
+// iceFree(x, y) is layout.js shipWalkable for the ice sim's radius.
+export function canLeave(s, iceFree) {
+  return s.y < LEAVE_Y && s.z < 0.5 && iceFree(s.x, Math.min(s.y, LEAVE_AT)) === true;
+}
 const OUTER_DOOR = 'COL__iceberg-airlock__airlock_outerdoor';
 
 export function shipFrame(ship) {
@@ -139,7 +148,7 @@ export function createShip(RAPIER, { manifest, collisionScenes, ship, warn = () 
     locate(s);
   }
   function leave(s) {
-    state.aboard = false; s.z = 0; s.y = Math.min(s.y, LEAVE_Y - 0.02);
+    state.aboard = false; s.z = 0; s.y = Math.min(s.y, LEAVE_AT);
     state.events.push({ kind: 'leave' });
   }
   function place(name, s) {

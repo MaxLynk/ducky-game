@@ -17,7 +17,7 @@ import { createRayIndex } from './ray-index.js';
 import { buildWorld, cutBox, AIRLOCK_PORTAL, AIRLOCK_DOOR_SLAB, inPortal } from './world.js';
 import { createShipState, shipWalkable, surfaceAt } from './layout.js';
 import { loadGLB, nodeName } from './gltf-load.js';
-import { createShip, BOARD_Y, LEAVE_Y, CELL_NAMES, STOP_NAMES } from './ship.js';
+import { createShip, canLeave, BOARD_Y, CELL_NAMES, STOP_NAMES } from './ship.js';
 import { createRouteDriver } from './route-driver.js';
 import { createInspect } from './inspect.js';
 import { createSnowballs, trajectory, aimAt } from './snowballs.js';
@@ -522,7 +522,7 @@ function stepWorld(dt) {
   // Through the open airlock he boards the physics ship; walking back out he returns to the ice.
   if (inside === false && s.y > BOARD_Y && api.interiorReady && shipWalkable(s.x, s.y, shipState, sim.tuning.radius) === true) {
     aboard.board(s); sim.setMover(aboard.tick);
-  } else if (inside && s.y < LEAVE_Y && s.z < 0.5) {
+  } else if (inside && canLeave(s, (x, y) => shipWalkable(x, y, shipState, sim.tuning.radius))) {
     aboard.leave(s); sim.setMover(null);
   }
   if (aboard.aboard === false && inspecting === false) aboard.idle(dt);

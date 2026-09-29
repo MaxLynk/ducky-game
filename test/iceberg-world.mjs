@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { loadGLB } from '../src/gltf-load.js';
-import { createShip, BOARD_Y, LEAVE_Y } from '../src/ship.js';
+import { createShip, canLeave, BOARD_Y } from '../src/ship.js';
 import { createSim } from '../src/sim.js';
 import { createShipState, shipWalkable, surfaceAt } from '../src/layout.js';
 import { loadGrid } from '../scripts/drive.mjs';
@@ -47,7 +47,7 @@ export async function loadWorld(opts = {}) {
     shipState.step(dt);
     ship.setOuterDoor(shipState.door > 0.9);
     if (ship.aboard === false && s.y > BOARD_Y && shipWalkable(s.x, s.y, shipState, 0.3, false) === true) { ship.board(s); sim.setMover(mover); }
-    else if (ship.aboard && s.y < LEAVE_Y && s.z < 0.5) { ship.leave(s); sim.setMover(null); }
+    else if (ship.aboard && canLeave(s, (x, y) => shipWalkable(x, y, shipState, 0.3, false))) { ship.leave(s); sim.setMover(null); }
     if (ship.aboard === false) ship.idle(dt);
     return used;
   }
