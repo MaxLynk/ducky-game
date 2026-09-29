@@ -1,23 +1,22 @@
 import * as THREE from 'three';
-import { ROUGH, TARGETS, ROOMS, FURNITURE, WALLS } from './layout.js';
+import { ROUGH, TARGETS } from './layout.js';
 
-// Every blockout is registered by stable ID. A Blender GLB can replace its visual
-// at this transform without changing room traversal or interaction identifiers.
+// Every inspectable model is registered by stable ID. A local GLB can replace its visual at this
+// transform. The ship's rooms are the walkable export's cells (main.js registers them); what is
+// built here is the ice plain's props and the airlock's animated outer door, which the export
+// models as a closed slab.
 export function buildWorld(scene) {
   const models = new Map();
   const inside = new THREE.Group();
-  inside.name = 'blockout:main-deck';
+  inside.name = 'airlock-door';
   scene.add(inside);
   const outside = new THREE.Group();
   outside.name = 'practice-plain';
   scene.add(outside);
   const materials = {
-    floor: new THREE.MeshStandardMaterial({ color: 0x554637, roughness: 0.9 }),
-    wall: new THREE.MeshStandardMaterial({ color: 0x98704e, roughness: 0.82 }),
     dark: new THREE.MeshStandardMaterial({ color: 0x283e49, roughness: 0.72 }),
     trim: new THREE.MeshStandardMaterial({ color: 0xd99d4e, metalness: 0.5, roughness: 0.4 }),
     light: new THREE.MeshBasicMaterial({ color: 0xffdda1 }),
-    screen: new THREE.MeshBasicMaterial({ color: 0x164552 }),
     snow: new THREE.MeshStandardMaterial({ color: 0xf0f5ff, roughness: 1 }),
     blue: new THREE.MeshStandardMaterial({ color: 0x448ca6, roughness: 0.45 }),
   };
@@ -48,59 +47,12 @@ export function buildWorld(scene) {
     mesh.position.set(x, z, -y); mesh.rotation.y = yaw; parent.add(mesh);
     return mesh;
   }
-  for (const r of ROOMS) {
-    const part = new THREE.Group();
-    inside.add(part);
-    register(r.id, part, r.label);
-    box(r.id + ':floor', (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, -0.06,
-      r.x1 - r.x0, r.y1 - r.y0, 0.16, materials.floor, part);
-    box(r.id + ':ceiling', (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, 3.06,
-      r.x1 - r.x0, r.y1 - r.y0, 0.12, materials.wall, part);
-  }
-  for (const p of WALLS) box(p.id, p.x, p.y, p.z, p.w, p.d, p.h, materials.wall);
-  // Outer walls and partial dividers keep the hall and doorways continuous.
-  box('blockout:cockpit:window-sill', -20, 27, 0.4, 0.16, 9, 0.8, materials.wall);
-  box('blockout:cockpit:window-header', -20, 27, 2.8, 0.16, 9, 0.4, materials.wall);
-  for (const y of [22.5, 25, 29, 31.5]) box('blockout:window-rib:' + y, -20, y, 1.7, 0.16, 0.08, 2, materials.trim);
-  for (let x = -19; x < 7; x += 3) {
-    box('blockout:ceiling-light:' + x, x, 27, 2.98, 0.6, 0.9, 0.025, materials.light);
-    box('blockout:hall-guide:' + x, x, 26, 0.025, 1.2, 0.06, 0.015, materials.light);
-  }
-  for (const p of FURNITURE) {
-    const part = new THREE.Group();
-    inside.add(part); register(p.id, part);
-    const mat = p.type === 'seat' ? materials.dark : materials.wall;
-    box(p.id + ':body', p.x, p.y, p.type === 'seat' ? 0.48 : p.z, p.w, p.d,
-      p.type === 'seat' ? 0.24 : p.h, mat, part);
-    if (p.type === 'seat') {
-      box(p.id + ':back', p.x + 0.3, p.y, 0.85, 0.2, p.d, 0.75, mat, part);
-      box(p.id + ':pedestal', p.x, p.y, 0.2, 0.24, 0.24, 0.4, materials.trim, part);
-    }
-  }
-  const screens = [];
-  for (let k = 0; k < 5; k++) {
-    const screen = box('blockout:console:screen:' + k, -18.47, 24.6 + k * 1.2, 1.05,
-      0.035, 0.85, 0.55, materials.screen.clone());
-    screens.push(screen);
-  }
-  for (const [i, color] of [0xf4d045, 0x4a91ff, 0xf68eaf].entries()) {
-    const b = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 8), new THREE.MeshBasicMaterial({ color }));
-    b.position.set(-18.42, 0.75, -(26.65 + i * 0.35)); inside.add(b);
-    register('blockout:console:button:' + ['tractor', 'warp', 'saws'][i], b);
-  }
-  const backup = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 8), materials.light);
-  backup.position.set(-17.7, 0.8, -26.35); inside.add(backup); register('blockout:lighting-backup', backup);
-  label('COCKPIT  +12 TO +20', -12.12, 27, 2.6, 2.6, inside, Math.PI / 2);
-  label('KITCHEN', -8.5, 25.88, 2.2, 1.5);
-  label("CAPTAIN'S CABIN", -8.5, 28.12, 2.2, 2);
-  label('MAIN DECK  |  FORWARD', -4.15, 27, 2.6, 2.5, inside, Math.PI / 2);
-  const consoleLabel = label('LIGHTING BACKUP', -18.43, 27, 1.65, 2.1, inside, Math.PI / 2);
-  register('blockout:console:label', consoleLabel);
-  const door = box('blockout:airlock:outer-door', -2, 20.35, 1.35, 2.3, 0.16, 2.7, materials.dark);
-  for (const x of [-3.23, -0.77]) box('blockout:airlock:frame:' + x, x, 20.22, 1.5, 0.15, 0.22, 3, materials.trim);
-  box('blockout:airlock:header', -2, 20.22, 2.9, 2.6, 0.22, 0.2, materials.trim);
-  label('AIRLOCK', -2, 20.1, 2.56, 1.6);
-  const doorLight = box('blockout:airlock:indicator', -3.35, 20.08, 1.3, 0.13, 0.07, 0.5, materials.light);
+  // The export's airlock_outerdoor is 1.6 m wide at x -2.8 to -1.2; this door covers it and slides up.
+  const door = box('airlock:outer-door', -2, 20.35, 1.25, 1.9, 0.16, 2.5, materials.dark);
+  for (const x of [-3.02, -0.98]) box('airlock:frame:' + x, x, 20.22, 1.4, 0.15, 0.22, 2.8, materials.trim);
+  box('airlock:header', -2, 20.22, 2.72, 2.2, 0.22, 0.16, materials.trim);
+  label('AIRLOCK', -2, 20.1, 2.45, 1.4);
+  const doorLight = box('airlock:indicator', -3.14, 20.08, 1.3, 0.13, 0.07, 0.5, materials.light);
   for (const r of ROUGH) {
     box(r.id, r.x, r.y, 0.025, r.width, r.depth, 0.05, materials.snow, outside);
     for (let i = 0; i < 16; i++) {
@@ -124,20 +76,11 @@ export function buildWorld(scene) {
     }
     label(t.id.slice(-2), t.x, t.y - 0.22, 2.55, 0.6, root);
   }
-  // Fill small construction seams between adjacent rooms.
-  box('blockout:main-deck:subfloor', -6, 27, -0.13, 28, 12, 0.08, materials.floor);
-  for (const [id, entry] of models) {
-    if (id === 'blockout:cockpit') continue;
-    if (id.startsWith('blockout:cockpit:') || id.startsWith('blockout:console') || id.startsWith('blockout:seat') || id.startsWith('blockout:window') || id === 'blockout:lighting-backup') {
-      if (entry.object.parent === inside) models.get('blockout:cockpit').object.add(entry.object);
-    }
-  }
   return { inside, outside, door, models, targetMeshes, materials,
     register,
     update(ship) {
-      door.position.y = 1.35 + ship.door * 2.85;
+      door.position.y = 1.25 + ship.door * 2.7;
       doorLight.material = ship.door > 0.9 ? materials.blue : materials.light;
-      screens.forEach((s, k) => s.material.color.setHex(ship.consoleOn ? [0x5cdcc4, 0x77b6ed, 0xe3bf6b][k % 3] : 0x164552));
     },
     replace(id, model) {
       const slot = models.get(id);
@@ -149,20 +92,30 @@ export function buildWorld(scene) {
   };
 }
 
-export function cutAirlock(ship) {
-  // The blockout portal cuts only the game visual, never the ship of record.
-  ship.traverse((o) => {
-    if (o.isMesh === true) {
-      o.material.onBeforeCompile = (shader) => {
-        shader.vertexShader = 'varying vec3 portalWorld;\n' + shader.vertexShader;
-        shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
-          '#include <begin_vertex>\nportalWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-        shader.fragmentShader = 'varying vec3 portalWorld;\n' + shader.fragmentShader;
-        shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>',
-          '#include <clipping_planes_fragment>\nif (portalWorld.x > -3.25 && portalWorld.x < -0.75 && portalWorld.y > -0.05 && portalWorld.y < 2.95 && portalWorld.z < -19.0 && portalWorld.z > -24.0) discard;');
-      };
-      o.material.customProgramCacheKey = () => 'game-airlock-v1';
-      o.material.needsUpdate = true;
-    }
+// Shader cuts for the game view only; the exported models are never edited. `box` is in three
+// world coordinates: [x0, x1, y0, y1, z0, z1].
+export function cutBox(root, box, key) {
+  const [x0, x1, y0, y1, z0, z1] = box.map((v) => v.toFixed(3));
+  const test = `if (portalWorld.x > ${x0} && portalWorld.x < ${x1} && portalWorld.y > ${y0} && portalWorld.y < ${y1} && portalWorld.z > ${z0} && portalWorld.z < ${z1}) discard;`;
+  const seen = new Set();
+  root.traverse((o) => {
+    if (o.isMesh !== true || seen.has(o.material)) return;
+    seen.add(o.material);
+    o.material.onBeforeCompile = (shader) => {
+      shader.vertexShader = 'varying vec3 portalWorld;\n' + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+        '#include <begin_vertex>\nportalWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      shader.fragmentShader = 'varying vec3 portalWorld;\n' + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>',
+        '#include <clipping_planes_fragment>\n' + test);
+    };
+    o.material.customProgramCacheKey = () => key;
+    o.material.needsUpdate = true;
   });
 }
+// The hull opening in front of the airlock, world plane x -2.95 to -1.05, y 19 to 24, up to 2.6 m.
+export const AIRLOCK_PORTAL = [-2.95, -1.05, -0.05, 2.6, -24, -19];
+// The export's closed outer door slab inside the airlock cell, x -2.85 to -1.15, y 20.3 to 20.7.
+export const AIRLOCK_DOOR_SLAB = [-2.85, -1.15, -0.05, 2.45, -20.7, -20.3];
+export const inPortal = (p) => p.x > AIRLOCK_PORTAL[0] && p.x < AIRLOCK_PORTAL[1] && p.y > AIRLOCK_PORTAL[2]
+  && p.y < AIRLOCK_PORTAL[3] && p.z > AIRLOCK_PORTAL[4] && p.z < AIRLOCK_PORTAL[5];

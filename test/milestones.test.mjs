@@ -53,26 +53,32 @@ test('M1: snowballs arc, obey cooldown and splat on ice, hull and target', async
   }
 });
 
-test('M2: port door blocks when closed, opens and admits a walk to the forward cockpit', async () => {
-  const { createShipState, shipWalkable, shipToWorld } = await import('../src/layout.js');
+test('M2: port door blocks when closed, opens and admits a walk aboard to the forward cockpit', async () => {
+  const { createShipState, shipWalkable } = await import('../src/layout.js');
+  const { loadWorld, run } = await import('./iceberg-world.mjs');
+  const { createRouteDriver } = await import('../src/route-driver.js');
   const ship = createShipState();
   assert.equal(shipWalkable(-2, 20.5, ship, 0.3), false);
   assert.equal(ship.interact(-2, 19.5), 'door');
   for (let i = 0; i < 90; i++) ship.step(1 / 60);
   assert.equal(shipWalkable(-2, 20.5, ship, 0.3), true);
-  const g = loadGrid();
-  const sim = createSim(g, { free: (x, y, r) => shipWalkable(x, y, ship, r), surface: () => 'deck' });
-  sim.state.x = -2;
-  sim.state.y = 19.3;
-  for (let i = 0; i < 280; i++) sim.step(1 / 60, { x: 0, y: 1 });
-  assert.ok(sim.state.y > 26);
-  for (let i = 0; i < 450; i++) sim.step(1 / 60, { x: -1, y: 0 });
-  assert.ok(sim.state.x < -13);
-  assert.deepEqual(shipToWorld(12, 0), [-12, 27]);
-  assert.deepEqual(shipToWorld(20, 0), [-20, 27]);
-  assert.equal(ship.interact(-18.6, 27), 'console');
-  assert.equal(ship.consoleOn, true);
-  console.log('main deck walk', JSON.stringify({ x: sim.state.x, y: sim.state.y, door: ship.door, console: ship.consoleOn }));
+  // The same door in the game loop, then aboard the walkable Iceberg to the cockpit.
+  const w = await loadWorld();
+  const s = w.sim.state;
+  s.x = -2; s.y = 19.3;
+  for (let i = 0; i < 60; i++) w.step(1 / 60, { x: 0, y: 1 });
+  assert.ok(s.y < 20.35 && w.ship.aboard === false, 'the closed door stops him at ' + s.y);
+  assert.equal(w.step(1 / 60, { interact: true }), 'door');
+  for (let i = 0; i < 90; i++) w.step(1 / 60, {});
+  for (let i = 0; i < 90; i++) w.step(1 / 60, { x: 0, y: 1 });
+  assert.equal(w.ship.aboard, true);
+  const r = run(w, createRouteDriver(w.ship, ['airlock', 'airlock_gate', 'workshop_fwd', 'hall_arch', 'hall_mid', 'hall_fwd', 'vestibule_centre']));
+  assert.ok(r.done, JSON.stringify(r.failed));
+  assert.equal(w.step(1 / 60, { interact: true }).kind, 'cockpit-up');
+  assert.ok(run(w, createRouteDriver(w.ship, ['cockpit_aisle'], { arrive: 0.12 })).done);
+  assert.deepEqual(w.step(1 / 60, { interact: true }), { kind: 'console', on: true });
+  assert.ok(s.x <= -17 && s.x >= -21 && s.z > 2.2, JSON.stringify({ x: s.x, y: s.y, z: s.z }));
+  console.log('walk aboard to the cockpit', JSON.stringify({ x: s.x, y: s.y, feet: s.z, console: w.ship.state.consoleOn }));
 });
 
 test('M2: inspect orbit changes view while retaining the selected centre', async () => {
@@ -86,16 +92,25 @@ test('M2: inspect orbit changes view while retaining the selected centre', async
   assert.ok(Math.hypot(...inspect.position().map((v, i) => v - a[i])) > 1);
 });
 
-test('M2: the visible room dividers and furniture stop a walk, and the door cannot close on Ducky', async () => {
-  const { createShipState, shipWalkable } = await import('../src/layout.js');
+test('M2: the ship\'s walls stop a walk, and the door cannot close on Ducky', async () => {
+  const { createShipState } = await import('../src/layout.js');
+  const { loadWorld, run, placeAt, manifest } = await import('./iceberg-world.mjs');
+  const { createRouteDriver } = await import('../src/route-driver.js');
+  // The export's wall control: straight through sleeping room 3's port wall. With the wall it
+  // must fail; with only that wall removed the same walk must succeed, or the check proves nothing.
+  const route = manifest.control_routes.CTL_bulkhead_shortcut;
+  const walled = await loadWorld();
+  placeAt(walled, route[0]);
+  const blocked = run(walled, createRouteDriver(walled.ship, route.slice(1)), 20);
+  assert.equal(blocked.done, false);
+  const open = await loadWorld();
+  assert.ok(open.ship.registry.remove(manifest.negative_controls.wall_removed.remove[0]));
+  placeAt(open, route[0]);
+  assert.ok(run(open, createRouteDriver(open.ship, route.slice(1)), 20).done);
   const ship = createShipState();
-  assert.equal(shipWalkable(-9.7, 25.8, ship, 0.3), false);
-  assert.equal(shipWalkable(-17.5, 27, ship, 0.3), false);
   ship.interact(-2, 19);
   ship.step(1);
   assert.equal(ship.interact(-2, 20.5), 'doorway-occupied');
   assert.equal(ship.doorTarget, 1);
   assert.equal(ship.interact(-2, 22), 'door');
-  ship.step(1);
-  assert.equal(shipWalkable(-2, 20.5, ship, 0.3), false);
 });

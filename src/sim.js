@@ -46,6 +46,7 @@ export function createSim(grid, opts = {}) {
     t: 0,
     contact: false,
     contactHull: false,
+    z: 0, // his feet: 0 on the ice, the deck height aboard
     collide: opts.collide !== false,
     surface: 'ice',
   };
@@ -89,6 +90,9 @@ export function createSim(grid, opts = {}) {
     return { moved, bumped };
   }
 
+  let mover = null;
+  function setMover(fn) { mover = fn || null; }
+
   function step(dt, input = {}) {
     if (!(dt > 0)) return s; // a zero or negative step would integrate him backwards
     s.t += dt;
@@ -126,18 +130,23 @@ export function createSim(grid, opts = {}) {
       }
     }
 
-    const { moved, bumped } = move(Math.cos(s.heading) * s.speed * dt, Math.sin(s.heading) * s.speed * dt);
+    const dx = Math.cos(s.heading) * s.speed * dt;
+    const dy = Math.sin(s.heading) * s.speed * dt;
+    // Aboard the ship a mover (ship.js, Rapier) takes the step instead of the walk grid.
+    const { moved, bumped } = mover ? mover(dt, dx, dy, s) : move(dx, dy);
     s.distance += moved;
     s.contact = bumped;
-    s.contactHull = bumped && nearestHull(grid, s.x, s.y, T.radius + 0.5) <= T.radius + 0.35;
+    s.contactHull = mover === null && bumped && nearestHull(grid, s.x, s.y, T.radius + 0.5) <= T.radius + 0.35;
     if (bumped) {
       // a bump costs speed; a slide into something ends the slide
-      s.speed = Math.min(s.speed, moved / Math.max(dt, 1e-6));
+      // Aboard, the character controller resolves the contact and still needs the full push to
+      // climb a step, so only the ice sim trades speed for a bump.
+      if (mover === null) s.speed = Math.min(s.speed, moved / Math.max(dt, 1e-6));
       if (s.mode === 'slide' && moved < 0.01) { s.mode = 'getup'; s.modeT = 0; }
     }
     if (s.mode === 'walk' || s.mode === 'stand') s.walkPhase += (moved / T.stride) * Math.PI;
     return s;
   }
 
-  return { state: s, step, onIce, free, tuning: T };
+  return { state: s, step, onIce, free, setMover, tuning: T };
 }

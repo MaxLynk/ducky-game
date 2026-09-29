@@ -1,15 +1,23 @@
 import { flowField } from './autopilot.js';
 import { TARGETS } from './layout.js';
+import { createRouteDriver } from './route-driver.js';
 
 // A repeatable input demonstration. It uses the same movement, throws and use action
-// as a player, with no position changes or synthetic hit events.
-export function createMilestoneDemo(grid) {
+// as a player, with no position changes or synthetic hit events. Aboard, it walks the walkable
+// Iceberg's own waypoints from the airlock to the cockpit vestibule.
+export function createMilestoneDemo(grid, ship) {
   let phase = 0;
   let since = 0;
   let fired = false;
   const field = flowField(grid, -2, 18.7, 0.3);
   const events = [];
-  function next(s) { phase++; since = s.t; fired = false; events.push({ phase, t: s.t }); }
+  let walk = null;
+  function next(s) { phase++; since = s.t; fired = false; walk = null; events.push({ phase, t: s.t }); }
+  function route(s, names) {
+    walk ??= createRouteDriver(ship, names);
+    if (walk.done) { next(s); return {}; }
+    return walk.read(s);
+  }
   function toward(s, x, y, radius = 0.25) {
     if (Math.hypot(x - s.x, y - s.y) < radius) { next(s); return {}; }
     const a = Math.atan2(y - s.y, x - s.x);
@@ -42,26 +50,29 @@ export function createMilestoneDemo(grid) {
         if (elapsed > 1.1) next(s);
         return { interact: use, lookYaw: Math.PI / 2 };
       }
-      if (phase === 8) return toward(s, -2, 27);
-      if (phase === 9) return toward(s, -14, 27);
-      if (phase === 10) return toward(s, -14, 24);
-      if (phase === 11) return toward(s, -18, 24);
-      if (phase === 12) {
+      if (phase === 8) return route(s, ['airlock', 'airlock_gate', 'workshop_fwd', 'hall_arch', 'hall_mid', 'hall_fwd', 'vestibule_centre']);
+      if (phase === 9) {
+        const use = elapsed > 0.3 && fired === false; if (use) fired = true;
+        if (elapsed > 1) next(s);
+        return { interact: use, lookYaw: Math.PI };
+      }
+      if (phase === 10) return route(s, ['cockpit_aisle']);
+      if (phase === 11) {
         const use = elapsed > 0.5 && fired === false; if (use) fired = true;
         if (elapsed > 2) next(s);
-        return { interact: use, lookYaw: Math.atan2(27 - s.y, -19 - s.x), lookPitch: -0.08 };
+        return { interact: use, lookYaw: Math.PI, lookPitch: -0.08 };
+      }
+      if (phase === 12) {
+        const select = fired === false; fired = true;
+        if (elapsed > 4) next(s);
+        return { inspectId: select ? 'iceberg:cockpit' : null, orbit: 0.006 };
       }
       if (phase === 13) {
         const select = fired === false; fired = true;
         if (elapsed > 4) next(s);
-        return { inspectId: select ? 'blockout:cockpit' : null, orbit: 0.006 };
+        return { inspectId: select ? 'iceberg:main-hall' : null, orbit: 0.006 };
       }
       if (phase === 14) {
-        const select = fired === false; fired = true;
-        if (elapsed > 4) next(s);
-        return { inspectId: select ? 'ship:cockpit-of-record' : null, orbit: 0.006 };
-      }
-      if (phase === 15) {
         const select = fired === false; fired = true;
         return { inspectId: select ? 'ship' : null, orbit: 0.006 };
       }
